@@ -1,0 +1,4 @@
+# mediapipe が opencv-contrib-python と numpy を依存として導入する。
+# opencv-python を別途入れると cv2 が衝突するので入れないこと。
+mediapipe==1.1.1
+opencv-contrib-python==5.0.0.93

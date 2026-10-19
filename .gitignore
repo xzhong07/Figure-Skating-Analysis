@@ -1,0 +1,17 @@
+# 仮想環境
+.venv/
+.venv-1/
+
+# Python
+__pycache__/
+*.pyc
+
+# モデルファイル（scripts/download_model.py で再取得できる）
+models/*.task
+models/*.part
+
+# 動画・解析結果（サイズが大きく、動画は第三者の著作物を含むため）
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
