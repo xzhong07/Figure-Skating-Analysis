@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from alignment import Aligner, to_pixels, to_world
+from alignment import Aligner, map_time, to_pixels, to_world
 from camera_motion import estimate_camera_motion, stabilize_points
 from jump_events import JumpEvents, detect_jump
 from landmarks_io import load_landmarks, save_landmarks
@@ -20,6 +20,7 @@ from main import ROOT, extract_poses, model_path_for
 from pose_estimator import PoseFrame
 from skeleton_drawer import SkeletonStyle, draw_skeleton, draw_skeleton_points, draw_text_lines
 from video_io import VideoInfo, VideoReader, VideoWriter
+from view_align import SPREAD_WARNING_DEG, estimate_view_offset, mirror_world, project, rotate_about_vertical
 
 # お手本: 太め・はっきりした色（左=緑、右=黄）。自分: 細め・薄い色（左=水色、右=桃色）
 MODEL_STYLE = SkeletonStyle(left=(60, 220, 60), right=(0, 220, 255), center=(255, 255, 255), thickness_scale=1.3)
@@ -73,6 +74,8 @@ class Comparison:
     ref: Subject
     aligner: Aligner
     mirror_model: bool
+    view_offset: float | None = None  # お手本の3D骨格を回した角度（度）。None なら2Dのまま重ねている
+    view_spread: float | None = None  # 撮影角度の差の推定のばらつき（度）。手動指定のときは None
 
 
 def load_subject(
@@ -95,16 +98,37 @@ def build_comparison(
     my_landing: int | None = None,
     model_takeoff: int | None = None,
     model_landing: int | None = None,
+    view_align: bool = True,
+    view_offset: float | None = None,
 ) -> Comparison:
-    """両方の動画の骨格を用意し、踏切・着氷を検出して、時間と位置の対応づけを作る。"""
+    """両方の動画の骨格を用意し、踏切・着氷を検出して、時間と位置の対応づけを作る。
+
+    view_align=True のときは、お手本の3D骨格を撮影角度の差だけ回してから写して重ねる
+    （view_offset を渡すとその角度を使う）。False ならお手本の画面上の2D骨格をそのまま重ねる。
+    """
     ref = load_subject(ref_video, model_name, min_confidence, model_takeoff, model_landing)
     me = load_subject(my_video, model_name, min_confidence, my_takeoff, my_landing)
     print(describe("お手本", ref.events, ref.fps))
     print(describe("自分  ", me.events, me.fps))
 
     ref_pts, ref_vis = to_pixels(ref.poses, ref.info.width, ref.info.height, mirror=mirror_model)
+    spread = None
+    if view_align:
+        ref_world = mirror_world(ref.world) if mirror_model else ref.world
+        if view_offset is None:
+            ref_frame = map_time(me.events, me.fps, len(me.poses), ref.events, ref.fps, len(ref.poses))
+            view_offset, spread = estimate_view_offset(me.world, me.events, me.fps, ref_world, ref_frame)
+            print(f"撮影角度の差: {view_offset:.0f}°（ばらつき {spread:.0f}°）")
+            if spread > SPREAD_WARNING_DEG:
+                print("  ※ ばらつきが大きく、推定が不安定です。--view-offset で角度を指定することもできます。")
+        else:
+            print(f"撮影角度の差: {view_offset:.0f}°（手動指定）")
+        # Aligner は胴体の長さの比で拡大するので、メートル単位の座標をそのまま渡せる
+        ref_pts = project(rotate_about_vertical(ref_world, view_offset))
+    else:
+        view_offset = None
     aligner = Aligner(me.pts, me.fps, me.events, ref_pts, ref_vis, ref.fps, ref.events)
-    return Comparison(me, ref, aligner, mirror_model)
+    return Comparison(me, ref, aligner, mirror_model, view_offset, spread)
 
 
 def draw_overlay(
@@ -146,13 +170,18 @@ def add_comparison_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--my-landing", type=int, help="自分の動画の着氷フレーム（自動検出を上書き）")
     parser.add_argument("--model-takeoff", type=int, help="お手本の踏切フレーム（自動検出を上書き）")
     parser.add_argument("--model-landing", type=int, help="お手本の着氷フレーム（自動検出を上書き）")
-    parser.add_argument("--mirror-model", action="store_true", help="お手本を左右反転する（滑る向きが逆の動画どうしのとき）")
+    parser.add_argument("--mirror-model", action="store_true",
+                        help="お手本を左右反転する（撮影角度の補正を使うときは通常不要）")
+    parser.add_argument("--no-view-align", action="store_true",
+                        help="撮影角度の補正をせず、お手本の画面上の骨格をそのまま重ねる")
+    parser.add_argument("--view-offset", type=float, help="撮影角度の差（度）を手動で指定する（自動推定を上書き）")
 
 
 def comparison_from_args(args: argparse.Namespace) -> Comparison:
     return build_comparison(
         args.input, args.reference, args.model, args.min_confidence, args.mirror_model,
         args.my_takeoff, args.my_landing, args.model_takeoff, args.model_landing,
+        view_align=not args.no_view_align, view_offset=args.view_offset,
     )
 
 
@@ -201,6 +230,7 @@ def main() -> int:
         "fps": my_info.fps,
         "reference_fps": ref_info.fps,
         "mirror_model": args.mirror_model,
+        **({"view_offset": comp.view_offset} if comp.view_offset is not None else {}),
         "events": {"me": vars(my_events), "reference": vars(ref_events)},
         "frames": records,
     }

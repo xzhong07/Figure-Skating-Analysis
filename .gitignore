@@ -15,3 +15,8 @@ input/*
 !input/.gitkeep
 output/*
 !output/.gitkeep
+
+
+*.txt
+# プレゼン用のメモ（公開しない）
+report.txt

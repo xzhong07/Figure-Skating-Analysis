@@ -308,8 +308,10 @@ class Renderer:
         self._timeline_shapes(base, index)
         canvas = Canvas(base)
         self._timeline_labels(canvas)
-        canvas.rect((PANEL_X + PAD, ty, PANEL_X + PAD + 120, ty + 40), (0, 0, 0, 170), radius=6)
-        canvas.text((PANEL_X + PAD + 12, ty + 6), "お手本", 24, rgb(MODEL_STYLE.left), bold=True)
+        label = "お手本（元の映像）"
+        canvas.rect((PANEL_X + PAD, ty, PANEL_X + PAD + 24 + int(font(24, bold=True).getlength(label)), ty + 40),
+                    (0, 0, 0, 170), radius=6)
+        canvas.text((PANEL_X + PAD + 12, ty + 6), label, 24, rgb(MODEL_STYLE.left), bold=True)
         if thumb is None:
             canvas.text((PANEL_X + PAD + THUMB_W // 2, ty + THUMB_H // 2), "（対応する場面なし）", 24,
                         (180, 180, 180), anchor="mm")
@@ -385,6 +387,9 @@ def intro_screen(view: np.ndarray, comp: Comparison, slow: float) -> np.ndarray:
     lines = [
         f"・{slow:g}倍速で再生し、{len(KEYFRAMES)}つの場面で一時停止してアドバイスを表示します。",
         "・太線（緑・黄）がお手本、細線（水色・桃色）が自分の骨格です。お手本は自分の体の位置と大きさに合わせています。",
+        (f"・お手本の骨格は、撮影角度の差（約{abs(comp.view_offset):.0f}°）を3Dで回して補正し、自分のカメラから見た形で重ねています。"
+         "右上のお手本の映像は元の撮影角度のままです。")
+        if comp.view_offset is not None else "・お手本の骨格は、お手本の撮影角度のまま重ねています。",
         "・一時停止中は、アドバイスの番号と同じ色の線で、測った場所を示します（白い点線は水平・鉛直の目安）。",
         f"・踏切と着氷：自分 {me.events.takeoff / me.fps:.2f}秒 → {me.events.landing / me.fps:.2f}秒"
         f"（滞空 {(me.events.landing - me.events.takeoff) / me.fps:.2f}秒）／ お手本の滞空 "
