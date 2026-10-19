@@ -1,4 +1,6 @@
 """推定したランドマークをフレームに描画する。"""
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 
@@ -30,24 +32,42 @@ RIGHT_BONES = [
 ]
 CENTER_BONES = [(L_SHOULDER, R_SHOULDER), (L_HIP, R_HIP)]
 
-# BGR。回転中に左右を見分けやすいよう左=青系 / 右=赤系
-LEFT_COLOR = (255, 140, 0)
-RIGHT_COLOR = (0, 60, 255)
-CENTER_COLOR = (230, 230, 230)
+
+@dataclass(frozen=True)
+class SkeletonStyle:
+    """色は BGR。thickness_scale は解像度から決まる線の太さに掛ける倍率。"""
+
+    left: tuple[int, int, int]
+    right: tuple[int, int, int]
+    center: tuple[int, int, int]
+    thickness_scale: float = 1.0
 
 
-def draw_skeleton(frame: np.ndarray, pose: PoseFrame, min_visibility: float = 0.5) -> np.ndarray:
+# 回転中に左右を見分けやすいよう左=青系 / 右=赤系
+DEFAULT_STYLE = SkeletonStyle(left=(255, 140, 0), right=(0, 60, 255), center=(230, 230, 230))
+
+
+def draw_skeleton(
+    frame: np.ndarray, pose: PoseFrame, min_visibility: float = 0.5, style: SkeletonStyle = DEFAULT_STYLE
+) -> np.ndarray:
     """frame に骨格を描画して返す（frame 自体を書き換える）。"""
     if not pose.detected:
         return frame
+    h, w = frame.shape[:2]
+    pts = np.column_stack((pose.landmarks[:, 0] * w, pose.landmarks[:, 1] * h))
+    return draw_skeleton_points(frame, pts, pose.visibility >= min_visibility, style)
 
+
+def draw_skeleton_points(
+    frame: np.ndarray, points_px: np.ndarray, visible: np.ndarray, style: SkeletonStyle = DEFAULT_STYLE
+) -> np.ndarray:
+    """ピクセル座標 (33, 2) の骨格を描画する。visible が False の関節は描かない。"""
     h, w = frame.shape[:2]
     # 解像度に応じて線の太さを変える（1080p で約4px）
-    thickness = max(2, round(min(h, w) / 270))
+    thickness = max(1, round(max(2, min(h, w) / 270) * style.thickness_scale))
     radius = thickness + 2
 
-    pts = np.column_stack((pose.landmarks[:, 0] * w, pose.landmarks[:, 1] * h)).round().astype(int)
-    visible = pose.visibility >= min_visibility
+    pts = points_px.round().astype(int)
 
     def bones(pairs, color):
         for a, b in pairs:
@@ -60,27 +80,33 @@ def draw_skeleton(frame: np.ndarray, pose: PoseFrame, min_visibility: float = 0.
                 cv2.circle(frame, tuple(pts[i]), radius, color, -1, cv2.LINE_AA)
                 cv2.circle(frame, tuple(pts[i]), radius, (0, 0, 0), 1, cv2.LINE_AA)
 
-    bones(CENTER_BONES, CENTER_COLOR)
+    bones(CENTER_BONES, style.center)
     # 首: 両肩の中点 → 鼻
     if visible[L_SHOULDER] and visible[R_SHOULDER] and visible[NOSE]:
         neck = tuple(((pts[L_SHOULDER] + pts[R_SHOULDER]) // 2))
-        cv2.line(frame, neck, tuple(pts[NOSE]), CENTER_COLOR, thickness, cv2.LINE_AA)
-    bones(LEFT_BONES, LEFT_COLOR)
-    bones(RIGHT_BONES, RIGHT_COLOR)
-    joints(LEFT_POINTS, LEFT_COLOR)
-    joints(RIGHT_POINTS, RIGHT_COLOR)
-    joints([NOSE], CENTER_COLOR)
+        cv2.line(frame, neck, tuple(pts[NOSE]), style.center, thickness, cv2.LINE_AA)
+    bones(LEFT_BONES, style.left)
+    bones(RIGHT_BONES, style.right)
+    joints(LEFT_POINTS, style.left)
+    joints(RIGHT_POINTS, style.right)
+    joints([NOSE], style.center)
+    return frame
+
+
+def draw_text_lines(frame: np.ndarray, lines: list[str]) -> np.ndarray:
+    """左上から順に文字列を表示する（OpenCV の制約で ASCII のみ）。"""
+    h, w = frame.shape[:2]
+    scale = max(0.5, min(h, w) / 900)
+    for i, text in enumerate(lines):
+        org = (int(12 * scale), int(36 * scale * (i + 1)))
+        cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), int(4 * scale) + 1, cv2.LINE_AA)
+        cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), max(1, int(2 * scale)), cv2.LINE_AA)
     return frame
 
 
 def draw_info(frame: np.ndarray, pose: PoseFrame) -> np.ndarray:
     """左上にフレーム番号・時刻・検出状態を表示する。"""
-    h, w = frame.shape[:2]
-    scale = max(0.5, min(h, w) / 900)
     text = f"frame {pose.frame_index}  {pose.timestamp_ms / 1000:.2f}s"
     if not pose.detected:
         text += "  (no pose)"
-    org = (int(12 * scale), int(36 * scale))
-    cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), int(4 * scale) + 1, cv2.LINE_AA)
-    cv2.putText(frame, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), max(1, int(2 * scale)), cv2.LINE_AA)
-    return frame
+    return draw_text_lines(frame, [text])

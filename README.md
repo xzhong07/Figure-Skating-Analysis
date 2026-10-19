@@ -37,6 +37,29 @@
 | `--min-confidence` | `0.5` | 検出・追跡の信頼度しきい値。回転中に見失う場合は下げてみる |
 | `--no-json` | | ランドマークJSONを出力しない |
 
+## 自分の動画にお手本の骨格を重ねる
+
+```powershell
+.venv\Scripts\python.exe src\overlay.py input\my_axel.mp4 --reference input\axel_model.mp4
+```
+
+1. 両方の動画の骨格を推定する（`output/<名前>_landmarks.json` が同じモデルで作られていれば再利用）
+2. 背景の動きからカメラのパン・チルト・ズームを推定して打ち消し、腰と足の上下動から踏切・頂点・着氷を自動で検出する
+3. 時間を合わせる: 踏切と着氷をそろえ、空中は滞空時間の比で伸縮、踏切前と着氷後は等速で対応づける
+4. 位置と大きさを合わせる: 胴体の長さで拡大縮小し、胴体の中心を重ねる（傾きの差を見せるため回転はしない）
+
+出力:
+- `output/my_axel_overlay.mp4` … お手本の骨格（太線、左半身=緑・右半身=黄）と自分の骨格（細線）を重ねた動画
+- `output/my_axel_alignment.json` … 各フレームの対応先のお手本のフレーム、拡大率、検出した踏切・着氷
+
+| オプション | 説明 |
+|---|---|
+| `--my-takeoff N` / `--my-landing N` | 自分の動画の踏切・着氷フレームを手動で指定する（自動検出が外れたとき） |
+| `--model-takeoff N` / `--model-landing N` | お手本の踏切・着氷フレームを手動で指定する |
+| `--mirror-model` | お手本を左右反転する（滑る向きが逆の動画どうしのとき） |
+| `--hide-self` | 自分の骨格を描かない |
+| `--model` / `--min-visibility` / `--min-confidence` | `main.py` と同じ |
+
 ## 構成
 
 ```
@@ -44,7 +67,12 @@ src/
   pose_estimator.py   PoseLandmarker のラッパー（フレーム → PoseFrame）
   skeleton_drawer.py  骨格とフレーム情報の描画
   video_io.py         動画の読み込み・書き出し
-  main.py             CLI
+  landmarks_io.py     ランドマークJSONの保存と読み込み
+  camera_motion.py    背景の動きからカメラの動きを推定
+  jump_events.py      踏切・頂点・着氷の検出
+  alignment.py        お手本と自分の時間・位置の対応づけ
+  main.py             CLI: 骨格を推定して重ねる
+  overlay.py          CLI: 自分の動画にお手本の骨格を重ねる
 scripts/
   download_model.py   モデルファイルの取得
 ```
