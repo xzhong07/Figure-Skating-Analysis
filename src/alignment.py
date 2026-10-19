@@ -41,6 +41,15 @@ def to_pixels(poses: list[PoseFrame], width: int, height: int, mirror: bool = Fa
     return pts, vis
 
 
+def to_world(poses: list[PoseFrame]) -> np.ndarray:
+    """(N, 33, 3) のメートル単位の3D座標（腰の中心が原点）。未検出フレームは NaN。"""
+    world = np.full((len(poses), NUM_LANDMARKS, 3), np.nan)
+    for i, p in enumerate(poses):
+        if p.detected:
+            world[i] = p.world_landmarks
+    return world
+
+
 def torso_center(pts: np.ndarray) -> np.ndarray:
     """(..., 33, 2) → (..., 2): 両肩と両腰の4点の平均。"""
     return pts[..., TORSO_POINTS, :].mean(axis=-2)
@@ -135,15 +144,24 @@ class Aligner:
 
     def transform(self, my_index: int) -> tuple[np.ndarray, np.ndarray, dict] | None:
         """自分のフレーム番号に対する (お手本の骨格のピクセル座標, visibility, 変換の情報)。描けないときは None。"""
-        position = self.ref_frame[my_index]
+        return self.transform_at(my_index, self.ref_frame[my_index])
+
+    def transform_at(self, my_index: int, position: float) -> tuple[np.ndarray, np.ndarray, dict] | None:
+        """お手本のフレーム位置 position の骨格を、自分のフレーム my_index の体に合わせて写す。"""
         center = self.my_center[my_index]
-        if np.isnan(position) or np.isnan(center[0]):
+        s = self.scale[my_index]
+        if np.isnan(s):
+            # 時間の対応づけの範囲外のフレームは、最も近い拡大率を使う
+            valid = np.flatnonzero(~np.isnan(self.scale))
+            if len(valid) == 0:
+                return None
+            s = self.scale[valid[np.argmin(np.abs(valid - my_index))]]
+        if np.isnan(position) or np.isnan(center[0]) or not 0 <= position <= len(self.ref_pts) - 1:
             return None
         sampled = sample_pose(self.ref_pts, self.ref_vis, position)
         if sampled is None:
             return None
         ref_pose, vis = sampled
-        s = self.scale[my_index]
         ref_center = torso_center(ref_pose)
         mapped = (ref_pose - ref_center) * s + center
         info = {"scale": float(s), "ref_center": ref_center.tolist(), "my_center": center.tolist()}
