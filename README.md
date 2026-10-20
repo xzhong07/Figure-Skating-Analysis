@@ -91,13 +91,23 @@
 
 ## アプリ（Figure Skating Lab）
 
+画面は `web/` の React アプリ（Vite + Tailwind CSS + shadcn/ui）。Node.js が必要。最初の1回と、画面のコードを変えたあとに作り直す。
+
 ```powershell
+cd web
+npm install          # 最初の1回だけ
+npm run build        # web/dist に画面を作る
+cd ..
 .venv\Scripts\python.exe src\app.py          # http://localhost:8000 をブラウザ（Chrome / Edge）で開く
 ```
 
+画面を直しながら確認するときは、`src\app.py` を動かしたまま `web` で `npm run dev` を実行し、表示された http://localhost:5173 を開く（保存するとすぐ反映される。API は 8000 番に転送される）。
+
 - 上のタブで種目を選ぶ（今は `1A` だけ。`2S`・`CSp` は準備中）
 - 「動画を選ぶ」（ドラッグ＆ドロップも可）か「カメラで撮る」で自分の動画を取り込むと、解析が始まる
-- 左に自分の映像（お手本の骨格・自分の骨格・測定線はそれぞれオンオフできる）、右にお手本の映像とアドバイス
+- my_axel_advice.mp4 と同じく、左 2/3 に自分の映像を大きく、右 1/3 にお手本の映像とアドバイスを表示する。アドバイスは枠に収まるよう文字の大きさを自動で調整するので、スクロールしなくても全文が読める
+- お手本の骨格・自分の骨格はスイッチでオンオフできる。測定線・キーフレームで止める・人物を拡大・動画全体の表示は「表示設定」から切り替える
+- 再生範囲の最後まで来ると「まとめ」を表示する（上の「まとめ」ボタンでいつでも開ける）
 - 再生速度は既定 0.25倍。キーフレーム（①〜⑦）で自動で一時停止し、再生ボタンで続きから再生する
 - シークバーはどこをクリック／ドラッグしてもその位置へ移動する。①〜⑦の印を押すとその場面へ移動する
 - スペースキーで再生・一時停止、← → で1フレームずつ移動
@@ -129,7 +139,11 @@ src/
   app.py              アプリのサーバ（Flask）
   main.py             CLI: 骨格を推定して重ねる
   overlay.py          CLI: 自分の動画にお手本の骨格を重ねる
-web/                  アプリの画面（index.html, app.js, style.css）
+web/                  アプリの画面（React + Vite + Tailwind CSS + shadcn/ui）
+  src/App.tsx         画面全体（ヘッダー・種目タブ・取り込み・解析の進み具合）
+  src/components/     VideoStage（映像と骨格）, PlayerControls・Timeline（再生・シークバー）,
+                      SidePanel（お手本とアドバイス）, SummaryDialog, CameraDialog, FitBox, ui/（shadcn/ui）
+  src/lib/            player.ts（再生とキーフレームでの一時停止）, analysis.ts（描画など）
 scripts/
   download_model.py   モデルファイルの取得
 ```

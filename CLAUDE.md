@@ -6,7 +6,7 @@
 
 ## 環境
 
-- Windows 11、PowerShell。Python 3.15（`.venv`）。`.venv-1` は未使用の重複
+- Windows 11、PowerShell。Python 3.15（`.venv`）。`.venv-1` は未使用の重複。アプリの画面には Node.js（v24）を使う
 - MediaPipe 1.1.1 は旧 `mp.solutions` がない。**Tasks API の `PoseLandmarker`（VIDEO モード）** を使う。モデルファイルは `models/pose_landmarker_heavy.task`（`scripts/download_model.py` で取得）
 - OpenCV は **`opencv-contrib-python` だけ** を入れる（mediapipe の依存）。`opencv-python` を併せて入れると `cv2` が衝突する
 - 日本語の文字は OpenCV で描けないので、Pillow と `C:\Windows\Fonts\BIZ-UDGothicR.ttc` / `B.ttc` で描く（`src/text_render.py`）
@@ -42,10 +42,14 @@
 
 - `app.py`（Flask）: アップロード → `output/app/<ジョブID>/` に保存 → imageio-ffmpeg で一定フレームレートの H.264 mp4 に変換 → `build_comparison`（自分のランドマークはジョブのフォルダに保存）→ `analyze` → `app_export.export`。解析は別スレッドで1件ずつ
 - `app_export.py`: `result.json`（各フレームの骨格・写したお手本の骨格・切り抜き枠・お手本の画像番号、キーフレームとアドバイス、まとめ、骨の組と色）、お手本の切り抜き画像、測定線の透明 PNG。描画は `advice_video.py` の `Renderer` / `Cropper` / `annotate_advice` を再利用している
-- `web/`（素の HTML/JS/CSS、ビルド不要）: `<video>` を canvas に切り抜いて描き、骨格は JS で描く。フレーム番号 = `floor(mediaTime × fps + 0.05)`。一時停止中にキーフレームのフレームにいるときだけ、その場面のアドバイスと測定線を出す
+- `web/`（React + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui（radix-nova）、ダークテーマ）: `npm run build` で `web/dist` を作り、Flask が配信する（`npm run dev` は 5173 番で、API を 8000 番へ転送）。`web/node_modules` と `web/dist` はコミットしない
+  - `lib/player.ts`: `<video>` の再生とフレームの追跡、キーフレームでの一時停止。フレーム番号 = `floor(mediaTime × fps + 0.05)`
+  - `components/VideoStage.tsx` + `lib/analysis.ts`: canvas に映像・骨格・測定線を描く。canvas は左側いっぱいの大きさで、拡大表示では切り抜き枠の高さに合わせて人物を中心に置く
+  - `components/SidePanel.tsx`: 一時停止中にキーフレームのフレームにいるときだけ、その場面のアドバイスを出す。`FitBox` が枠に収まるまで文字を小さくする（スクロールさせないため）
+  - shadcn/ui のコンポーネントは `npx shadcn@latest add <名前>` で `components/ui/` に追加する
 - 種目は `elements.py`。2S・CSp は `available=False`（タブだけ）
 - 変換した動画で推定し直すので、元の動画での結果と1〜3フレームずれることがある（例: my_axel の頂点 84 → 81。お手本どうしでも撮影角度の差 約9°、直す点1件が出る）
-- 画面の確認: ヘッドレス Edge を DevTools プロトコルで操作してスクリーンショットを撮った（Claude in Chrome が使えないとき）
+- 画面の確認: ヘッドレス Edge を DevTools プロトコルで操作してスクリーンショットを撮った（Claude in Chrome が使えないとき）。1920×1080 と 1366×768 で、アドバイスがスクロールなしで収まることを見る
 
 ## これまでに分かったこと
 

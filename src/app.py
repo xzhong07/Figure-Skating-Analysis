@@ -1,6 +1,6 @@
 """Figure Skating Lab: お手本と自分のジャンプを比べるアプリのサーバ。
 
-使い方:
+使い方（画面は web/ の React アプリ。先に一度 web/ で npm install と npm run build を実行しておく）:
     python src/app.py            # http://localhost:8000 をブラウザで開く
     python src/app.py --port 8080
 
@@ -24,7 +24,7 @@ from elements import ELEMENTS, ELEMENTS_BY_CODE
 from main import ROOT
 from overlay import build_comparison
 
-WEB_DIR = ROOT / "web"
+WEB_DIR = ROOT / "web" / "dist"  # web/ で npm run build した画面
 JOBS_DIR = ROOT / "output" / "app"
 MAX_SIDE = 1920  # 変換後の動画の長い辺の最大ピクセル数
 MAX_UPLOAD_MB = 500
@@ -107,15 +107,15 @@ def run_job(job_id: str, upload: Path, element_code: str) -> None:
 
 @app.get("/")
 def index():
-    return send_from_directory(WEB_DIR, "index.html")
-
-
-@app.get("/static/<path:path>")
-def static_files(path: str):
-    response = send_from_directory(WEB_DIR, path)
-    # 画面のファイルを直したらすぐ反映されるよう、キャッシュさせない
+    response = send_from_directory(WEB_DIR, "index.html")
+    # 画面を作り直したらすぐ反映されるよう、index.html はキャッシュさせない（ほかのファイルは名前が変わる）
     response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+@app.get("/<path:path>")
+def web_files(path: str):
+    return send_from_directory(WEB_DIR, path)
 
 
 @app.get("/files/<job_id>/<path:path>")
@@ -180,6 +180,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if not (WEB_DIR / "index.html").exists():
+        print("画面がまだ作られていません。web フォルダで npm install と npm run build を実行してください。")
+        return 1
     print(f"Figure Skating Lab: http://localhost:{args.port} をブラウザで開いてください（終了は Ctrl+C）")
     # カメラはブラウザの安全な接続（localhost）でしか使えないので、この PC からだけ受け付ける
     app.run(host="127.0.0.1", port=args.port, threaded=True)
