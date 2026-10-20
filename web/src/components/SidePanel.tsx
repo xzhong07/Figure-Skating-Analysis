@@ -69,7 +69,7 @@ export function SidePanel({
       </div>
 
       <FitBox
-        fitKey={activeKf ? activeKf.key : `legend-${data.keyframes.find((k) => k.frame > frame)?.key}`}
+        fitKey={activeKf ? activeKf.key : `legend-${frame < data.keyframes[0].frame}`}
         max={activeKf ? 20 : 16}
       >
         {activeKf ? <AdviceList items={activeKf.advice} /> : <Legend data={data} frame={frame} />}
@@ -101,7 +101,8 @@ export function AdviceList({ items }: { items: AdviceItem[] }) {
 
 function Legend({ data, frame }: { data: Result; frame: number }) {
   const sk = data.skeleton
-  const next = data.keyframes.find((k) => k.frame > frame)
+  // 説明書きは最初のキーフレームより前にいる間だけ出す
+  const showInfo = frame < data.keyframes[0].frame
   const view =
     data.view_offset === null
       ? "お手本の骨格は、お手本の撮影角度のまま重ねています。"
@@ -120,21 +121,20 @@ function Legend({ data, frame }: { data: Result; frame: number }) {
         {swatch(sk.self.right, false)}細線（水色・桃色）＝自分の骨格
       </p>
       <p className="text-muted-foreground">緑・水色が左半身、黄・桃色が右半身</p>
-      {next && (
-        <p className="mt-[0.3em] text-[1.15em] font-bold">
-          次の一時停止：{CIRCLED[next.no - 1]} {next.name}
-        </p>
+      {showInfo && (
+        <>
+          <Separator className="my-[0.4em]" />
+          <div className="flex flex-col gap-[0.3em] text-[0.85em] leading-relaxed text-muted-foreground">
+            <p>
+              踏切と着氷：自分 {seconds(data, data.events.takeoff)}秒 → {seconds(data, data.events.landing)}秒（滞空{" "}
+              {data.air_time.toFixed(2)}秒）／ お手本の滞空 {data.ref_air_time.toFixed(2)}秒
+            </p>
+            <p>{view}</p>
+            <p>一時停止中は、アドバイスの番号と同じ色の線で、測った場所を示します（白い点線は水平・鉛直の目安）。</p>
+            <p>数値は骨格推定によるおおよその値です。撮影の角度が違うと、角度などにずれが出ることがあります。</p>
+          </div>
+        </>
       )}
-      <Separator className="my-[0.4em]" />
-      <div className="flex flex-col gap-[0.3em] text-[0.85em] leading-relaxed text-muted-foreground">
-        <p>
-          踏切と着氷：自分 {seconds(data, data.events.takeoff)}秒 → {seconds(data, data.events.landing)}秒（滞空{" "}
-          {data.air_time.toFixed(2)}秒）／ お手本の滞空 {data.ref_air_time.toFixed(2)}秒
-        </p>
-        <p>{view}</p>
-        <p>一時停止中は、アドバイスの番号と同じ色の線で、測った場所を示します（白い点線は水平・鉛直の目安）。</p>
-        <p>数値は骨格推定によるおおよその値です。撮影の角度が違うと、角度などにずれが出ることがあります。</p>
-      </div>
     </div>
   )
 }
