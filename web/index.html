@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Figure Skating Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1 class="logo">Figure Skating Lab</h1>
+    <nav class="tabs" id="element-tabs" aria-label="種目"></nav>
+    <div class="header-actions">
+      <button type="button" class="btn" id="btn-summary" hidden>まとめ</button>
+      <label class="btn btn-primary" for="file-input">動画を選ぶ</label>
+      <input type="file" id="file-input" accept="video/*" hidden>
+      <button type="button" class="btn" id="btn-camera">カメラで撮る</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="left">
+      <div class="stage" id="stage">
+        <canvas id="view" width="1280" height="960"></canvas>
+        <video id="video" muted playsinline preload="auto"></video>
+        <div class="badge" id="badge" hidden></div>
+
+        <div class="dropzone" id="dropzone">
+          <p class="dropzone-title">自分のジャンプの動画を取り込みます</p>
+          <p>ここに動画をドロップするか、「動画を選ぶ」「カメラで撮る」を押してください。</p>
+          <p class="muted">踏切の少し前から着氷の後まで、全身が写っている動画を使ってください。</p>
+        </div>
+
+        <div class="progress" id="progress" hidden>
+          <p class="progress-title" id="progress-title">解析しています</p>
+          <div class="progress-bar"><div id="progress-fill"></div></div>
+          <p class="muted" id="progress-detail"></p>
+          <button type="button" class="btn" id="progress-close" hidden>閉じる</button>
+        </div>
+      </div>
+
+      <div class="controls" id="controls" aria-disabled="true">
+        <div class="control-row">
+          <button type="button" class="icon-btn" id="btn-play" title="再生（スペースキー）" aria-label="再生">▶</button>
+          <button type="button" class="icon-btn" id="btn-stop" title="停止（先頭に戻る）" aria-label="停止">■</button>
+          <label class="speed">再生速度
+            <select id="speed">
+              <option value="0.1">0.1倍</option>
+              <option value="0.25" selected>0.25倍</option>
+              <option value="0.5">0.5倍</option>
+              <option value="0.75">0.75倍</option>
+              <option value="1">1倍</option>
+            </select>
+          </label>
+          <span class="time" id="time">0.00 / 0.00秒</span>
+          <span class="phase" id="phase"></span>
+        </div>
+
+        <div class="timeline" id="timeline">
+          <div class="kf-markers" id="kf-markers"></div>
+          <div class="track" id="track">
+            <div class="zones" id="zones"></div>
+            <div class="played" id="played"></div>
+            <div class="playhead" id="playhead"></div>
+          </div>
+          <div class="zone-labels" id="zone-labels"></div>
+          <div class="tooltip" id="tooltip" hidden></div>
+        </div>
+
+        <div class="toggles">
+          <label class="switch"><input type="checkbox" id="show-ref" checked><span></span>お手本の骨格</label>
+          <label class="switch"><input type="checkbox" id="show-self" checked><span></span>自分の骨格</label>
+          <label class="switch"><input type="checkbox" id="show-marks" checked><span></span>測定線</label>
+          <label class="switch"><input type="checkbox" id="stop-at-kf" checked><span></span>キーフレームで止める</label>
+          <label class="switch"><input type="checkbox" id="zoom" checked><span></span>人物を拡大</label>
+          <label class="switch"><input type="checkbox" id="full-range"><span></span>動画全体</label>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel" id="panel">
+      <div id="panel-main">
+        <h2 class="panel-title" id="panel-title">動画を取り込んでください</h2>
+        <p class="panel-sub" id="panel-sub"></p>
+        <figure class="thumb" id="thumb">
+          <img id="thumb-img" alt="お手本の映像">
+          <figcaption>お手本（元の映像）</figcaption>
+          <p class="thumb-empty" id="thumb-empty">（対応する場面なし）</p>
+        </figure>
+        <div id="panel-body"></div>
+      </div>
+      <div id="panel-summary" hidden></div>
+    </aside>
+  </main>
+
+  <dialog class="camera" id="camera">
+    <div class="camera-head">
+      <h2>カメラで撮る</h2>
+      <select id="camera-select" aria-label="カメラ"></select>
+    </div>
+    <video id="camera-live" muted playsinline autoplay></video>
+    <video id="camera-review" controls playsinline hidden></video>
+    <p class="muted" id="camera-status">踏切の少し前から着氷の後まで、全身が写るように撮ってください。</p>
+    <div class="camera-actions">
+      <button type="button" class="btn btn-rec" id="cam-record">● 録画開始</button>
+      <button type="button" class="btn btn-primary" id="cam-use" hidden>この動画で解析</button>
+      <button type="button" class="btn" id="cam-retake" hidden>撮り直す</button>
+      <button type="button" class="btn" id="cam-close">閉じる</button>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

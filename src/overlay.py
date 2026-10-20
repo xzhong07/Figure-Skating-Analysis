@@ -7,6 +7,7 @@
 import argparse
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,9 +28,17 @@ MODEL_STYLE = SkeletonStyle(left=(60, 220, 60), right=(0, 220, 255), center=(255
 SELF_STYLE = SkeletonStyle(left=(230, 190, 140), right=(170, 150, 255), center=(200, 200, 200), thickness_scale=0.5)
 
 
-def load_or_extract(video: Path, model_name: str, min_confidence: float) -> tuple[VideoInfo, list[PoseFrame]]:
-    """output/<名前>_landmarks.json が同じモデルで作られていれば読み込み、なければ推定して保存する。"""
-    json_path = ROOT / "output" / f"{video.stem}_landmarks.json"
+# 進み具合の通知: (段階の名前, 済んだ数, 全体の数)
+Progress = Callable[[str, int, int], None]
+
+
+def load_or_extract(
+    video: Path, model_name: str, min_confidence: float,
+    json_path: Path | None = None, on_progress: Progress | None = None,
+) -> tuple[VideoInfo, list[PoseFrame]]:
+    """ランドマークJSON（既定: output/<名前>_landmarks.json）が同じモデルで作られていれば読み込み、
+    なければ推定して保存する。"""
+    json_path = json_path or ROOT / "output" / f"{video.stem}_landmarks.json"
     model_path = model_path_for(model_name)
     with VideoReader(video) as reader:
         info = reader.info
@@ -39,7 +48,13 @@ def load_or_extract(video: Path, model_name: str, min_confidence: float) -> tupl
                 print(f"既存のランドマークを使用: {json_path}")
                 return info, poses
         print(f"骨格を推定: {video}")
-        poses = extract_poses(reader, model_path, min_confidence)
+        on_frame = None
+        if on_progress:
+            total = max(1, info.frame_count)
+
+            def on_frame(_frame, pose: PoseFrame) -> None:
+                on_progress("pose", min(pose.frame_index + 1, total), total)
+        poses = extract_poses(reader, model_path, min_confidence, on_frame)
     save_landmarks(json_path, video, model_path.name, info, poses)
     print(f"ランドマーク: {json_path}")
     return info, poses
@@ -79,9 +94,12 @@ class Comparison:
 
 
 def load_subject(
-    video: Path, model_name: str, min_confidence: float, takeoff: int | None, landing: int | None
+    video: Path, model_name: str, min_confidence: float, takeoff: int | None, landing: int | None,
+    landmarks_path: Path | None = None, on_progress: Progress | None = None,
 ) -> Subject:
-    info, poses = load_or_extract(video, model_name, min_confidence)
+    info, poses = load_or_extract(video, model_name, min_confidence, landmarks_path, on_progress)
+    if on_progress:
+        on_progress("camera", 0, 1)
     pts, vis = to_pixels(poses, info.width, info.height)
     stable = stabilize_points(pts, estimate_camera_motion(video, poses))
     events = detect_jump(stable, info.fps, takeoff, landing)
@@ -100,14 +118,18 @@ def build_comparison(
     model_landing: int | None = None,
     view_align: bool = True,
     view_offset: float | None = None,
+    my_landmarks_path: Path | None = None,
+    on_progress: Progress | None = None,
 ) -> Comparison:
     """両方の動画の骨格を用意し、踏切・着氷を検出して、時間と位置の対応づけを作る。
 
     view_align=True のときは、お手本の3D骨格を撮影角度の差だけ回してから写して重ねる
     （view_offset を渡すとその角度を使う）。False ならお手本の画面上の2D骨格をそのまま重ねる。
+    my_landmarks_path を渡すと、自分の動画のランドマークJSONをそこに保存・再利用する。
+    on_progress には自分の動画の処理の進み具合を知らせる。
     """
     ref = load_subject(ref_video, model_name, min_confidence, model_takeoff, model_landing)
-    me = load_subject(my_video, model_name, min_confidence, my_takeoff, my_landing)
+    me = load_subject(my_video, model_name, min_confidence, my_takeoff, my_landing, my_landmarks_path, on_progress)
     print(describe("お手本", ref.events, ref.fps))
     print(describe("自分  ", me.events, me.fps))
 

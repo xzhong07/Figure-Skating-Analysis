@@ -18,6 +18,7 @@
 .venv\Scripts\python.exe src\main.py input\axel_model.mp4                                          # 骨格推定＋重ね描き
 .venv\Scripts\python.exe src\overlay.py input\my_axel.mp4 --reference input\axel_model.mp4        # お手本の骨格を自分に重ねる
 .venv\Scripts\python.exe src\advice_video.py input\my_axel.mp4 --reference input\axel_model.mp4   # アドバイスつきスロー動画
+.venv\Scripts\python.exe src\app.py                                                                # アプリ（http://localhost:8000）
 ```
 
 - 踏切・着氷の自動検出が外れたら `--my-takeoff N --my-landing N --model-takeoff N --model-landing N` で指定する
@@ -35,7 +36,16 @@
 7. `metrics.py` `Geometry`: 長さは胴体比、2D はカメラ補正済み座標、回転量だけ 3D で測る。visibility が 0.5 未満の項目は None（判定しない）
 8. `keyframes.py`: K1 踏切準備 〜 K7 着氷後の姿勢。お手本と自分で、それぞれの踏切・着氷を基準に同じ定義で選ぶ
 9. `advice_rules.py` `RULES`: 差 = 自分 − お手本。|差| ≥ しきい値なら low/high の文を出す。文が空ならその向きは問題にしない。1場面あたり最大3件＋良い点1件。**しきい値と文章の調整はこの表だけで行う**
-10. `advice_video.py`: 0.25倍速で再生し、キーフレームで一時停止（毎秒9文字で読める長さ、3〜15秒）。測定線はアドバイスの番号と同じ色
+10. `advice_video.py`: 0.25倍速で再生し、キーフレームで一時停止（毎秒9文字で読める長さ、3〜15秒）。測定線はアドバイスの番号と同じ色。8〜9 と再生範囲の計算は `analysis.py` `analyze()` にまとめてある
+
+## アプリ（Figure Skating Lab）
+
+- `app.py`（Flask）: アップロード → `output/app/<ジョブID>/` に保存 → imageio-ffmpeg で一定フレームレートの H.264 mp4 に変換 → `build_comparison`（自分のランドマークはジョブのフォルダに保存）→ `analyze` → `app_export.export`。解析は別スレッドで1件ずつ
+- `app_export.py`: `result.json`（各フレームの骨格・写したお手本の骨格・切り抜き枠・お手本の画像番号、キーフレームとアドバイス、まとめ、骨の組と色）、お手本の切り抜き画像、測定線の透明 PNG。描画は `advice_video.py` の `Renderer` / `Cropper` / `annotate_advice` を再利用している
+- `web/`（素の HTML/JS/CSS、ビルド不要）: `<video>` を canvas に切り抜いて描き、骨格は JS で描く。フレーム番号 = `floor(mediaTime × fps + 0.05)`。一時停止中にキーフレームのフレームにいるときだけ、その場面のアドバイスと測定線を出す
+- 種目は `elements.py`。2S・CSp は `available=False`（タブだけ）
+- 変換した動画で推定し直すので、元の動画での結果と1〜3フレームずれることがある（例: my_axel の頂点 84 → 81。お手本どうしでも撮影角度の差 約9°、直す点1件が出る）
+- 画面の確認: ヘッドレス Edge を DevTools プロトコルで操作してスクリーンショットを撮った（Claude in Chrome が使えないとき）
 
 ## これまでに分かったこと
 

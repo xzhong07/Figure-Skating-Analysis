@@ -17,12 +17,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from advice_rules import Advice, format_value, generate_advice, METRICS
+from advice_rules import Advice, format_value, METRICS
 from alignment import torso_center
+from analysis import analyze
 from jump_events import body_series, fill_missing, rolling
-from keyframes import KEYFRAME_NAMES, KEYFRAMES, select_keyframes
+from keyframes import KEYFRAME_NAMES, KEYFRAMES
 from main import ROOT
-from metrics import FRAME_METRICS, VIS_MIN, Geometry
+from metrics import VIS_MIN
 from overlay import MODEL_STYLE, Comparison, Subject, add_comparison_args, comparison_from_args, draw_overlay
 from skeleton_drawer import (
     L_ANKLE, L_HIP, L_KNEE, L_SHOULDER, L_WRIST,
@@ -39,7 +40,6 @@ PAD = 24
 THUMB_W = PANEL_W - 2 * PAD
 THUMB_H = THUMB_W * 3 // 4
 CROP_BODY = 7.0  # 切り抜きの高さ（胴体の長さの何倍か）
-LEAD_S = 0.8  # 踏切の前・着氷の後に再生する秒数
 READ_CHARS_PER_S = 9  # 一時停止の長さを決める読む速さ
 MAX_FREEZE_S = 15.0
 INTRO_S, SUMMARY_S = 5.0, 14.0
@@ -59,16 +59,6 @@ SUMMARY_METRICS = [
 
 def rgb(bgr: tuple[int, int, int]) -> tuple[int, int, int]:
     return bgr[2], bgr[1], bgr[0]
-
-
-# ---------- 測定値 ----------
-
-def collect_values(geom: Geometry, keyframes: dict[str, int]) -> dict[str, dict[str, float | None]]:
-    overall = geom.overall()
-    return {
-        key: {**{m: geom.frame_metric(m, frame) for m in FRAME_METRICS}, **overall}
-        for key, frame in keyframes.items()
-    }
 
 
 # ---------- 切り抜き ----------
@@ -497,10 +487,9 @@ def main() -> int:
     output = args.output or ROOT / "output" / f"{args.input.stem}_advice.mp4"
 
     comp = comparison_from_args(args)
-    my_geom, ref_geom = Geometry(comp.me), Geometry(comp.ref)
-    my_kf, ref_kf = select_keyframes(my_geom), select_keyframes(ref_geom)
-    my_values, ref_values = collect_values(my_geom, my_kf), collect_values(ref_geom, ref_kf)
-    advice = generate_advice(my_values, ref_values)
+    result = analyze(comp)
+    my_kf, ref_kf, advice = result.my_kf, result.ref_kf, result.advice
+    my_values, ref_values = result.my_values, result.ref_values
 
     write_reports(output.with_suffix(".json"), output.with_suffix(".md"), comp, my_kf, ref_kf,
                   my_values, ref_values, advice)
@@ -510,9 +499,7 @@ def main() -> int:
             print(f"   {'◯' if a.good else '・'} {a.text}")
 
     me = comp.me
-    start = max(0, me.events.takeoff - round(LEAD_S * me.fps))
-    # 着氷後のキーフレーム（K7）が LEAD_S より後になる場合もそこまで再生する
-    end = min(len(me.poses) - 1, max(me.events.landing + round(LEAD_S * me.fps), max(my_kf.values())))
+    start, end = result.start, result.end
     renderer = Renderer(comp, my_kf, ref_kf, advice, args.slow, start, end)
 
     out_per_source = OUT_FPS / (me.fps * args.slow)
