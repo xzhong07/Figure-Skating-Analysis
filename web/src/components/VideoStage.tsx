@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react"
 
 import { drawView } from "@/lib/analysis"
+import { cn } from "@/lib/utils"
 import type { Keyframe, Result, Settings } from "@/types"
 
 // 自分の映像。<video> は見えないように置き、canvas に切り抜いて骨格・測定線と一緒に描く。
@@ -13,6 +14,7 @@ export function VideoStage({
   settings,
   marks,
   badge,
+  className,
   children,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>
@@ -22,6 +24,7 @@ export function VideoStage({
   settings: Settings
   marks: Record<string, HTMLImageElement>
   badge: ReactNode
+  className?: string
   children?: ReactNode
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
@@ -51,7 +54,8 @@ export function VideoStage({
     const canvas = canvasRef.current
     if (!box || !canvas) return
     const resize = () => {
-      const dpr = window.devicePixelRatio || 1
+      // スマホの高い画素密度では描画が重くなるので 2 倍までにする
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
       canvas.width = Math.round(box.clientWidth * dpr)
       canvas.height = Math.round(box.clientHeight * dpr)
       drawRef.current()
@@ -86,7 +90,7 @@ export function VideoStage({
   }, [marks])
 
   return (
-    <div ref={boxRef} className="relative min-h-0 flex-1 overflow-hidden rounded-xl bg-black ring-1 ring-border">
+    <div ref={boxRef} className={cn("relative min-h-0 flex-1 overflow-hidden rounded-xl bg-black ring-1 ring-border", className)}>
       <canvas ref={canvasRef} className="absolute inset-0 size-full" />
       <video
         ref={videoRef}

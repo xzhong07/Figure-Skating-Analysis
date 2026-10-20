@@ -1,10 +1,12 @@
-import { Camera, ClipboardList, Pause, Play, Square, Upload, Video } from "lucide-react"
+import { Camera, ClipboardList, Pause, Play, QrCode, Scissors, Square, Upload, Video } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-import { CameraDialog, cameraSupported } from "@/components/CameraDialog"
+import { CameraDialog } from "@/components/CameraDialog"
+import { PhoneDialog } from "@/components/PhoneDialog"
 import { PlayerControls } from "@/components/PlayerControls"
 import { SidePanel } from "@/components/SidePanel"
 import { SummaryDialog } from "@/components/SummaryDialog"
+import { TrimDialog } from "@/components/TrimDialog"
 import { VideoStage } from "@/components/VideoStage"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -12,29 +14,43 @@ import { Card } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { CIRCLED, playRange } from "@/lib/analysis"
+import { getJob, getServerInfo, startAnalysis, uploadVideo, waitJob } from "@/lib/api"
+import { canUseInAppCamera, isTouchDevice } from "@/lib/device"
 import { Player } from "@/lib/player"
 import { cn } from "@/lib/utils"
 import type { Element, Job, Result, Settings } from "@/types"
 
 const FALLBACK_ELEMENTS: Element[] = [{ code: "1A", name: "シングルアクセル", available: true }]
+const RETRIM_HINT = "踏切の約1秒前から着氷の約1秒後までが入るように、範囲を選び直してみてください。"
 
 type Status =
   | { kind: "idle" }
   | { kind: "progress"; title: string; detail: string; ratio: number }
-  | { kind: "error"; message: string }
+  | { kind: "error"; message: string; canRetrim: boolean }
+
+const progressOf = (job: Job): Status => ({
+  kind: "progress",
+  title: job.message,
+  detail: job.total ? `${job.done} / ${job.total} フレーム` : "",
+  ratio: job.total ? job.done / job.total : 0,
+})
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const playerRef = useRef<Player | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const captureRef = useRef<HTMLInputElement>(null)
   const scrubWasPlaying = useRef(false)
+  const touch = useMemo(() => isTouchDevice(), [])
 
   const [elements, setElements] = useState<Element[]>(FALLBACK_ELEMENTS)
   const [element, setElement] = useState("1A")
+  const [job, setJob] = useState<Job | null>(null) // 取り込んだ動画（範囲を選び直すときに使う）
   const [data, setData] = useState<Result | null>(null)
   const [status, setStatus] = useState<Status>({ kind: "idle" })
   const [frame, setFrame] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [pausedKey, setPausedKey] = useState<string | null>(null)
   const [speed, setSpeed] = useState("0.25")
   const [settings, setSettings] = useState<Settings>({
     showRef: true,
@@ -46,11 +62,21 @@ export default function App() {
   })
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [cameraOpen, setCameraOpen] = useState(false)
+  const [trimOpen, setTrimOpen] = useState(false)
+  const [phoneUrls, setPhoneUrls] = useState<string[]>([])
+  const [phoneOpen, setPhoneOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
 
   const range = useMemo(() => (data ? playRange(data, settings.fullRange) : { start: 0, end: 0 }), [data, settings.fullRange])
   // 一時停止中で、ちょうどキーフレームの上にいるときはその場面のアドバイスを出す
-  const activeKf = data && !playing ? (data.keyframes.find((k) => k.frame === frame) ?? null) : null
+  // （同じフレームにキーフレームが2つあるときは、選んだ／止まったほうを出す）
+  const activeKf =
+    data && !playing
+      ? (data.keyframes.find((k) => k.key === pausedKey && k.frame === frame) ??
+        data.keyframes.find((k) => k.frame === frame) ??
+        null)
+      : null
+  const canRetrim = Boolean(job?.video)
 
   // キーフレームの測定線の画像
   const marks = useMemo(() => {
@@ -73,6 +99,7 @@ export default function App() {
       (s) => {
         setFrame(s.frame)
         setPlaying(s.playing)
+        setPausedKey(s.keyframe)
       },
       () => setSummaryOpen(true),
     )
@@ -96,7 +123,7 @@ export default function App() {
       if (!res.ok) throw new Error()
       result = await res.json()
     } catch {
-      setStatus({ kind: "error", message: "解析結果を読み込めませんでした。" })
+      setStatus({ kind: "error", message: "解析結果を読み込めませんでした。", canRetrim: false })
       return
     }
     history.replaceState(null, "", `#job=${id}`)
@@ -114,54 +141,42 @@ export default function App() {
     player.seek(r.start)
   }, [speed, settings.fullRange])
 
-  // 解析が終わるまで進み具合を表示する
-  const watchJob = useCallback(
-    async (id: string) => {
-      for (;;) {
-        let job: Job
-        try {
-          job = await (await fetch(`/api/jobs/${id}`)).json()
-        } catch {
-          setStatus({ kind: "error", message: "サーバに接続できません。src/app.py が動いているか確認してください。" })
-          return
-        }
-        if (job.stage === "error") {
-          setStatus({ kind: "error", message: job.error ?? "解析できませんでした。" })
-          return
-        }
-        if (job.stage === "done") {
-          await openResult(id)
-          return
-        }
-        setStatus({
-          kind: "progress",
-          title: job.message,
-          detail: job.total ? `${job.done} / ${job.total} フレーム` : "",
-          ratio: job.total ? job.done / job.total : 0,
-        })
-        await new Promise((resolve) => setTimeout(resolve, 400))
-      }
-    },
-    [openResult],
-  )
+  // 1. 送信 → 2. 変換 → 3. 範囲を選ぶ（TrimDialog）
+  const importVideo = useCallback(async (file: File) => {
+    playerRef.current?.pause()
+    setStatus({ kind: "progress", title: "動画を送っています", detail: file.name, ratio: 0 })
+    try {
+      const id = await uploadVideo(file, (ratio) =>
+        setStatus({ kind: "progress", title: "動画を送っています", detail: `${Math.round(ratio * 100)}%`, ratio }),
+      )
+      // 読み込み直しても、範囲を選ぶところから続けられるようにする
+      history.replaceState(null, "", `#job=${id}`)
+      const ready = await waitJob(id, ["ready"], (j) => setStatus(progressOf(j)))
+      setJob(ready)
+      setStatus({ kind: "idle" })
+      setTrimOpen(true)
+    } catch (e) {
+      setStatus({ kind: "error", message: (e as Error).message, canRetrim: false })
+    }
+  }, [])
 
-  const analyze = useCallback(
-    async (file: File) => {
+  // 4. 選んだ範囲を解析 → 結果を開く
+  const analyzeRange = useCallback(
+    async (start: number, end: number) => {
+      if (!job) return
+      setTrimOpen(false)
       playerRef.current?.pause()
-      setStatus({ kind: "progress", title: "動画を送っています", detail: "", ratio: 0 })
-      const form = new FormData()
-      form.append("video", file, file.name)
-      form.append("element", element)
+      setStatus({ kind: "progress", title: "解析を始めています", detail: "", ratio: 0 })
       try {
-        const res = await fetch("/api/analyze", { method: "POST", body: form })
-        const body = await res.json()
-        if (!res.ok) throw new Error(body.error || "送信できませんでした。")
-        void watchJob(body.id)
+        await startAnalysis(job.id, element, start, end)
+        const done = await waitJob(job.id, ["done"], (j) => setStatus(progressOf(j)))
+        setJob(done)
+        await openResult(job.id)
       } catch (e) {
-        setStatus({ kind: "error", message: (e as Error).message })
+        setStatus({ kind: "error", message: (e as Error).message, canRetrim: true })
       }
     },
-    [element, watchJob],
+    [job, element, openResult],
   )
 
   useEffect(() => {
@@ -169,10 +184,37 @@ export default function App() {
       .then((r) => r.json())
       .then(setElements)
       .catch(() => {})
+    if (!isTouchDevice()) getServerInfo().then((s) => setPhoneUrls(s.urls))
+    // 前回の続きを開く（解析が済んでいれば結果、まだなら範囲を選ぶところから）
     const match = location.hash.match(/job=([0-9a-f]+)/)
     if (match) {
-      setStatus({ kind: "progress", title: "前回の解析結果を開いています", detail: "", ratio: 1 })
-      void openResult(match[1])
+      const id = match[1]
+      setStatus({ kind: "progress", title: "前回の続きを開いています", detail: "", ratio: 1 })
+      getJob(id)
+        .then((j) => {
+          setJob(j)
+          if (j.stage === "ready" || (j.stage === "error" && j.video && !j.trim)) {
+            setStatus({ kind: "idle" })
+            setTrimOpen(true)
+          } else if (j.stage === "error") {
+            setStatus({ kind: "error", message: j.error ?? "解析できませんでした。", canRetrim: Boolean(j.video) })
+          } else if (j.stage === "done") {
+            void openResult(id)
+          } else {
+            // 変換中・解析中なら、終わるまで待つ
+            const target = j.video ? "done" : "ready"
+            waitJob(id, [target], (p) => setStatus(progressOf(p)))
+              .then((r) => {
+                setJob(r)
+                if (target === "done") return openResult(id)
+                setStatus({ kind: "idle" })
+                setTrimOpen(true)
+              })
+              .catch((e: Error) => setStatus({ kind: "error", message: e.message, canRetrim: Boolean(j.video) }))
+          }
+        })
+        // 範囲を選ぶ機能より前に作った結果には、ジョブの情報がない
+        .catch(() => void openResult(id))
     }
     // 最初の1回だけ
   }, [])
@@ -181,9 +223,9 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const player = playerRef.current
-      if (!data || !player || cameraOpen || summaryOpen) return
+      if (!data || !player || cameraOpen || summaryOpen || trimOpen) return
       const target = e.target as HTMLElement
-      if (target.closest("input, select, textarea, [role=combobox], [role=switch], [role=tab]")) return
+      if (target.closest("input, select, textarea, [role=combobox], [role=switch], [role=tab], [role=slider]")) return
       if (e.code === "Space") {
         e.preventDefault()
         player.toggle()
@@ -195,19 +237,25 @@ export default function App() {
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
-  }, [data, cameraOpen, summaryOpen])
+  }, [data, cameraOpen, summaryOpen, trimOpen])
 
   const pickFile = () => fileRef.current?.click()
+  // PC はアプリ内のカメラ、スマホ（と HTTPS でない接続）は標準カメラアプリで撮る
   const openCamera = () => {
-    if (!cameraSupported()) {
-      setStatus({
-        kind: "error",
-        message: "このブラウザではカメラ撮影を使えません。Chrome または Edge で http://localhost から開いてください。",
-      })
-      return
-    }
     playerRef.current?.pause()
-    setCameraOpen(true)
+    if (canUseInAppCamera()) setCameraOpen(true)
+    else captureRef.current?.click()
+  }
+  const openTrim = () => {
+    playerRef.current?.pause()
+    setStatus({ kind: "idle" })
+    setTrimOpen(true)
+  }
+
+  const onFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (file) void importVideo(file)
   }
 
   const badge = activeKf ? (
@@ -227,14 +275,17 @@ export default function App() {
     </>
   )
 
+  // 画面が狭いとき（スマホ）は、ボタンの文字を隠してアイコンだけにする
+  const label = (text: string) => <span className="hidden lg:inline">{text}</span>
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
-      <header className="flex h-14 flex-none items-center gap-6 border-b bg-card/60 px-4 backdrop-blur">
+      <header className="flex h-12 flex-none items-center gap-2 border-b bg-card/60 px-2 backdrop-blur lg:h-14 lg:gap-6 lg:px-4">
         <div className="flex items-center gap-2">
           <div className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
             <Video className="size-4" />
           </div>
-          <h1 className="text-lg font-bold tracking-tight whitespace-nowrap">Figure Skating Lab</h1>
+          <h1 className="hidden text-lg font-bold tracking-tight whitespace-nowrap md:block">Figure Skating Lab</h1>
         </div>
 
         <Tabs value={element} onValueChange={setElement}>
@@ -245,48 +296,53 @@ export default function App() {
                 value={e.code}
                 disabled={!e.available}
                 title={e.available ? e.name : `${e.name}（準備中）`}
-                className="px-4 font-bold"
+                className="px-2 font-bold lg:px-4"
               >
                 {e.code}
-                {!e.available && <span className="text-[10px] font-normal text-muted-foreground">準備中</span>}
+                {!e.available && <span className="hidden text-[10px] font-normal text-muted-foreground sm:inline">準備中</span>}
               </TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
 
-        <div className="ml-auto flex items-center gap-2">
-          {data && (
-            <Button variant="outline" onClick={() => setSummaryOpen(true)}>
-              <ClipboardList />
-              まとめ
+        <div className="ml-auto flex items-center gap-1.5 lg:gap-2">
+          {phoneUrls.length > 0 && (
+            <Button variant="ghost" onClick={() => setPhoneOpen(true)} aria-label="スマホで開く">
+              <QrCode />
+              {label("スマホで開く")}
             </Button>
           )}
-          <Button onClick={pickFile}>
+          {canRetrim && data && (
+            <Button variant="outline" onClick={openTrim} aria-label="範囲を選び直す">
+              <Scissors />
+              {label("範囲を選び直す")}
+            </Button>
+          )}
+          {data && (
+            <Button variant="outline" onClick={() => setSummaryOpen(true)} aria-label="まとめ">
+              <ClipboardList />
+              {label("まとめ")}
+            </Button>
+          )}
+          <Button onClick={pickFile} aria-label="動画を選ぶ">
             <Upload />
-            動画を選ぶ
+            {label("動画を選ぶ")}
           </Button>
-          <Button variant="secondary" onClick={openCamera}>
+          <Button variant="secondary" onClick={openCamera} aria-label="カメラで撮る">
             <Camera />
-            カメラで撮る
+            {label("カメラで撮る")}
           </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="video/*"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              e.target.value = ""
-              if (file) void analyze(file)
-            }}
-          />
+          <input ref={fileRef} type="file" accept="video/*" hidden onChange={onFileInput} />
+          {/* スマホでは標準カメラアプリ（背面カメラ）が開く */}
+          <input ref={captureRef} type="file" accept="video/*" capture="environment" hidden onChange={onFileInput} />
         </div>
       </header>
 
-      {/* my_axel_advice.mp4 と同じく、左 2/3 に自分の映像、右 1/3 にお手本とアドバイス */}
-      <main className="grid min-h-0 flex-1 grid-cols-[minmax(0,2fr)_minmax(380px,1fr)] gap-3 p-3">
+      {/* my_axel_advice.mp4 と同じく、横長の画面では左 2/3 に自分の映像、右 1/3 にお手本とアドバイス。
+          縦長の画面（スマホ）では上から 映像 → 操作 → お手本とアドバイス */}
+      <main className="grid min-h-0 flex-1 gap-2 p-2 portrait:grid-cols-1 portrait:grid-rows-[auto_minmax(0,1fr)] landscape:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)] lg:gap-3 lg:p-3">
         <section
-          className="flex min-h-0 flex-col gap-3"
+          className="flex min-h-0 flex-col gap-2 lg:gap-3"
           onDragOver={(e) => {
             e.preventDefault()
             setDragOver(true)
@@ -297,7 +353,7 @@ export default function App() {
             setDragOver(false)
             const files = [...e.dataTransfer.files]
             const file = files.find((f) => f.type.startsWith("video/")) ?? files[0]
-            if (file) void analyze(file)
+            if (file) void importVideo(file)
           }}
         >
           <VideoStage
@@ -307,8 +363,9 @@ export default function App() {
             activeKf={activeKf}
             settings={settings}
             marks={marks}
+            className="portrait:h-[36dvh] portrait:flex-none"
             badge={
-              <div className="absolute top-3 left-3 flex items-center gap-2 rounded-lg bg-black/65 px-3 py-1.5 text-lg font-bold text-white backdrop-blur">
+              <div className="absolute top-2 left-2 flex items-center gap-2 rounded-lg bg-black/65 px-2.5 py-1 text-sm font-bold text-white backdrop-blur lg:top-3 lg:left-3 lg:px-3 lg:py-1.5 lg:text-lg">
                 {badge}
               </div>
             }
@@ -316,17 +373,19 @@ export default function App() {
             {!data && status.kind === "idle" && (
               <div
                 className={cn(
-                  "absolute inset-3 flex flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed text-center",
+                  "absolute inset-2 flex flex-col items-center justify-center gap-3 overflow-y-auto rounded-lg border-2 border-dashed p-4 text-center lg:inset-3 lg:gap-4",
                   dragOver ? "border-primary bg-primary/10" : "border-border bg-card",
                 )}
               >
-                <Upload className="size-10 text-muted-foreground" />
+                <Upload className="size-8 text-muted-foreground lg:size-10" />
                 <div>
-                  <p className="text-xl font-bold">自分のジャンプの動画を取り込みます</p>
-                  <p className="mt-2 text-muted-foreground">ここに動画をドロップするか、下のボタンを押してください。</p>
-                  <p className="text-sm text-muted-foreground">踏切の少し前から着氷の後まで、全身が写っている動画を使ってください。</p>
+                  <p className="text-lg font-bold lg:text-xl">自分のジャンプの動画を取り込みます</p>
+                  <p className="mt-2 text-sm text-muted-foreground lg:text-base">
+                    {touch ? "下のボタンを押してください。" : "ここに動画をドロップするか、下のボタンを押してください。"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">取り込んだあとに、前後の余分なところを切り落とせます。</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   <Button size="lg" onClick={pickFile}>
                     <Upload />
                     動画を選ぶ
@@ -335,17 +394,23 @@ export default function App() {
                     <Camera />
                     カメラで撮る
                   </Button>
+                  {job?.video && (
+                    <Button size="lg" variant="outline" onClick={openTrim}>
+                      <Scissors />
+                      範囲を選んで解析を続ける
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
             {status.kind !== "idle" && (
-              <div className="absolute inset-0 grid place-items-center bg-background/80 backdrop-blur-sm">
-                <Card className="w-[min(460px,90%)] gap-4 p-6">
+              <div className="absolute inset-0 grid place-items-center bg-background/80 p-2 backdrop-blur-sm">
+                <Card className="w-[min(460px,100%)] gap-4 p-5 lg:p-6">
                   {status.kind === "progress" ? (
                     <>
                       <p className="text-lg font-bold">{status.title}</p>
                       <Progress value={status.ratio * 100} className="h-2" />
-                      <p className="text-sm text-muted-foreground">{status.detail || " "}</p>
+                      <p className="truncate text-sm text-muted-foreground">{status.detail || " "}</p>
                     </>
                   ) : (
                     <>
@@ -353,12 +418,20 @@ export default function App() {
                         <AlertTitle>解析できませんでした</AlertTitle>
                         <AlertDescription>
                           {status.message}
-                          踏切の少し前から着氷の後まで、全身が写っている動画でもう一度試してください。
+                          {status.canRetrim ? RETRIM_HINT : "踏切の少し前から着氷の後まで、全身が写っている動画でもう一度試してください。"}
                         </AlertDescription>
                       </Alert>
-                      <Button variant="outline" className="self-end" onClick={() => setStatus({ kind: "idle" })}>
-                        閉じる
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        {status.canRetrim && canRetrim && (
+                          <Button onClick={openTrim}>
+                            <Scissors />
+                            範囲を選び直す
+                          </Button>
+                        )}
+                        <Button variant="outline" onClick={() => setStatus({ kind: "idle" })}>
+                          閉じる
+                        </Button>
+                      </div>
                     </>
                   )}
                 </Card>
@@ -389,6 +462,7 @@ export default function App() {
               }
             }}
             onSeek={(f) => playerRef.current?.seek(f)}
+            onKeyframe={(key) => playerRef.current?.seekKeyframe(key)}
             onScrubStart={() => {
               const player = playerRef.current
               scrubWasPlaying.current = !!player?.playing
@@ -406,7 +480,15 @@ export default function App() {
       </main>
 
       <SummaryDialog data={data} open={summaryOpen} onOpenChange={setSummaryOpen} />
-      <CameraDialog open={cameraOpen} onOpenChange={setCameraOpen} onUse={(file) => void analyze(file)} />
+      <CameraDialog open={cameraOpen} onOpenChange={setCameraOpen} onUse={(file) => void importVideo(file)} />
+      <TrimDialog
+        video={job?.video ?? null}
+        initial={job?.trim}
+        open={trimOpen}
+        onOpenChange={setTrimOpen}
+        onConfirm={(start, end) => void analyzeRange(start, end)}
+      />
+      <PhoneDialog urls={phoneUrls} open={phoneOpen} onOpenChange={setPhoneOpen} />
     </div>
   )
 }

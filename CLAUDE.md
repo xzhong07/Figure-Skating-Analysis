@@ -40,7 +40,14 @@
 
 ## アプリ（Figure Skating Lab）
 
-- `app.py`（Flask）: アップロード → `output/app/<ジョブID>/` に保存 → imageio-ffmpeg で一定フレームレートの H.264 mp4 に変換 → `build_comparison`（自分のランドマークはジョブのフォルダに保存）→ `analyze` → `app_export.export`。解析は別スレッドで1件ずつ
+- `app.py`（Flask）: 流れは「送信 → 変換 → トリミング → 解析」
+  - `POST /api/upload`: `output/app/<ジョブID>/upload.*` に保存し、動画全体を imageio-ffmpeg で一定フレームレートの H.264 mp4（`video.mp4`）に変換 → 段階 `ready`
+  - `POST /api/jobs/<id>/analyze`（`element`, `start`, `end` はフレーム番号、1.5秒以上）: ffmpeg の `trim=start_frame:end_frame` で `runs/<開始>-<終了>/clip.mp4` を切り出し（範囲が全体なら `video.mp4` をそのまま使う）→ `build_comparison`（ランドマークは run のフォルダ）→ `analyze` → `app_export.export`。前の範囲の run は消す。解析は別スレッドで1件ずつ
+  - ジョブの情報は `job.json` に保存するので、サーバを起動し直しても `#job=<ID>` で結果を開いたり範囲を選び直したりできる
+  - `--lan` で `0.0.0.0` で待ち受け、スマホから開く URL を表示（`/api/server` で画面にも渡し、QR コードを出す）。既定は localhost だけ
+- スマホ: 解析は PC、スマホは同じネットワーク（Wi-Fi・PC のモバイルホットスポット・テザリング）から開く。「カメラで撮る」は、スマホ（`pointer: coarse`）や HTTPS でない接続では `<input capture="environment">` で標準カメラアプリ、PC の localhost ではアプリ内カメラ（`CameraDialog`）
+  - 縦向きは上から「映像（高さ 36dvh）→ 操作 → お手本とアドバイス（お手本の映像は左に小さく）」、横向きは PC と同じ左右の並び。小さな画面（幅 640px 以下か高さ 600px 以下）では、シークバーの印を積まずに①〜⑦のボタンを1列に並べ、骨格のスイッチを「表示」の中に入れる
+- キーフレームが同じフレームに2つあることがある（例: 頂点が早いと K3 と K4 が同じ）。画面は止まっているキーフレームのキー（`Player.keyframe`）で見分け、続けて再生すると次のキーフレームを出す
 - `app_export.py`: `result.json`（各フレームの骨格・写したお手本の骨格・切り抜き枠・お手本の画像番号、キーフレームとアドバイス、まとめ、骨の組と色）、お手本の切り抜き画像、測定線の透明 PNG。描画は `advice_video.py` の `Renderer` / `Cropper` / `annotate_advice` を再利用している
 - `web/`（React + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui（radix-nova）、ダークテーマ）: `npm run build` で `web/dist` を作り、Flask が配信する（`npm run dev` は 5173 番で、API を 8000 番へ転送）。`web/node_modules` と `web/dist` はコミットしない
   - `lib/player.ts`: `<video>` の再生とフレームの追跡、キーフレームでの一時停止。フレーム番号 = `floor(mediaTime × fps + 0.05)`
@@ -49,7 +56,8 @@
   - shadcn/ui のコンポーネントは `npx shadcn@latest add <名前>` で `components/ui/` に追加する
 - 種目は `elements.py`。2S・CSp は `available=False`（タブだけ）
 - 変換した動画で推定し直すので、元の動画での結果と1〜3フレームずれることがある（例: my_axel の頂点 84 → 81。お手本どうしでも撮影角度の差 約9°、直す点1件が出る）
-- 画面の確認: ヘッドレス Edge を DevTools プロトコルで操作してスクリーンショットを撮った（Claude in Chrome が使えないとき）。1920×1080 と 1366×768 で、アドバイスがスクロールなしで収まることを見る
+- 画面の確認: ヘッドレス Edge を DevTools プロトコルで操作してスクリーンショットを撮った（Claude in Chrome が使えないとき）。1920×1080 と 1366×768 で、アドバイスがスクロールなしで収まることを見る。スマホは `Emulation.setDeviceMetricsOverride(mobile)` と `setTouchEmulationEnabled` で 390×844（縦）と 844×390（横）を見る。ファイルの取り込みは `DOM.setFileInputFiles`
+- トリミングの確認には、`my_axel.mp4` の前後を ffmpeg の `tpad`（止め絵）で3秒ずつ延ばした動画を使った。ジャンプの部分（155〜330 フレーム）だけを選ぶと、元の動画とほぼ同じ結果になる
 
 ## これまでに分かったこと
 

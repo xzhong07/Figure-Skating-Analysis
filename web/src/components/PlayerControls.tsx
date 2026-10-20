@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { phaseOf, seconds } from "@/lib/analysis"
+import { useSmallScreen } from "@/lib/device"
 import type { Range, Result, Settings } from "@/types"
 
 export const SPEEDS = ["0.1", "0.25", "0.5", "0.75", "1"]
@@ -40,7 +41,7 @@ function IconButton({ label, children, ...props }: { label: string; children: Re
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button size="icon-lg" aria-label={label} {...props}>
+        <Button size="icon-lg" aria-label={label} className="pointer-coarse:size-11" {...props}>
           {children}
         </Button>
       </TooltipTrigger>
@@ -62,6 +63,7 @@ export function PlayerControls({
   onSpeed,
   onSettings,
   onSeek,
+  onKeyframe,
   onScrubStart,
   onScrubEnd,
 }: {
@@ -77,13 +79,22 @@ export function PlayerControls({
   onSpeed: (speed: string) => void
   onSettings: (settings: Partial<Settings>) => void
   onSeek: (frame: number) => void
+  onKeyframe: (key: string) => void
   onScrubStart: () => void
   onScrubEnd: () => void
 }) {
   const disabled = !data
+  // 小さな画面では、骨格のスイッチも「表示設定」の中にまとめて、映像とアドバイスの場所を空ける
+  const small = useSmallScreen()
+  const skeletonToggles = (
+    <>
+      <Toggle id="show-ref" label="お手本の骨格" checked={settings.showRef} onChange={(v) => onSettings({ showRef: v })} />
+      <Toggle id="show-self" label="自分の骨格" checked={settings.showSelf} onChange={(v) => onSettings({ showSelf: v })} />
+    </>
+  )
   return (
-    <Card className="flex-none gap-1 px-3 py-2.5" aria-disabled={disabled}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <Card className="flex-none gap-1 px-2 py-2 lg:px-3 lg:py-2.5" aria-disabled={disabled}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2 lg:gap-x-3">
         <IconButton label={playing ? "一時停止（スペースキー）" : "再生（スペースキー）"} onClick={onToggle} disabled={disabled}>
           {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
         </IconButton>
@@ -91,7 +102,7 @@ export function PlayerControls({
           <Square className="fill-current" />
         </IconButton>
         <Select value={speed} onValueChange={onSpeed} disabled={disabled}>
-          <SelectTrigger className="w-28" aria-label="再生速度">
+          <SelectTrigger className="w-24 pointer-coarse:h-11 lg:w-28" aria-label="再生速度">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -106,28 +117,32 @@ export function PlayerControls({
           <>
             <span className="font-mono text-sm tabular-nums">
               {seconds(data, frame)}秒
-              <span className="text-muted-foreground">
-                {" "}
-                / {seconds(data, range.start)}〜{seconds(data, range.end)}秒
-              </span>
+              {!small && (
+                <span className="text-muted-foreground">
+                  {" "}
+                  / {seconds(data, range.start)}〜{seconds(data, range.end)}秒
+                </span>
+              )}
             </span>
-            <Badge variant="outline">
-              {data.phases[phaseOf(data, frame)]}・フレーム {frame}
-            </Badge>
+            {!small && (
+              <Badge variant="outline">
+                {data.phases[phaseOf(data, frame)]}・フレーム {frame}
+              </Badge>
+            )}
           </>
         )}
 
-        <div className="ml-auto flex items-center gap-4">
-          <Toggle id="show-ref" label="お手本の骨格" checked={settings.showRef} onChange={(v) => onSettings({ showRef: v })} />
-          <Toggle id="show-self" label="自分の骨格" checked={settings.showSelf} onChange={(v) => onSettings({ showSelf: v })} />
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2">
+          {!small && skeletonToggles}
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" className="pointer-coarse:h-9">
                 <Settings2 />
-                表示設定
+                {small ? "表示" : "表示設定"}
               </Button>
             </PopoverTrigger>
             <PopoverContent align="end" className="flex w-60 flex-col gap-3">
+              {small && skeletonToggles}
               <Toggle id="show-marks" label="測定線" checked={settings.showMarks} onChange={(v) => onSettings({ showMarks: v })} />
               <Toggle
                 id="stop-at-kf"
@@ -154,8 +169,10 @@ export function PlayerControls({
           range={range}
           activeKey={activeKey}
           onSeek={onSeek}
+          onKeyframe={onKeyframe}
           onScrubStart={onScrubStart}
           onScrubEnd={onScrubEnd}
+          compact={small}
         />
       )}
     </Card>

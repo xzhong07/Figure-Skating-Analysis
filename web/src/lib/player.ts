@@ -4,6 +4,7 @@ import type { Range, Result } from "@/types"
 export interface PlayerState {
   frame: number
   playing: boolean
+  keyframe: string | null // 一時停止しているキーフレーム（同じフレームに2つあるときに見分けるため）
 }
 
 export class Player {
@@ -11,6 +12,7 @@ export class Player {
   frame = 0
   stopAtKeyframes = true
   range: Range = { start: 0, end: 0 }
+  keyframe: string | null = null
   private lastFrame = -1 // 再生中に通り過ぎたキーフレームを見つけるための、前のフレーム
   private readonly video: HTMLVideoElement
   private readonly onChange: (state: PlayerState) => void
@@ -39,7 +41,7 @@ export class Player {
   }
 
   private emit() {
-    this.onChange({ frame: this.frame, playing: this.playing })
+    this.onChange({ frame: this.frame, playing: this.playing, keyframe: this.keyframe })
   }
 
   async load(data: Result) {
@@ -48,8 +50,9 @@ export class Player {
     await new Promise((resolve) => this.video.addEventListener("loadeddata", resolve, { once: true }))
   }
 
-  seek(frame: number) {
+  seek(frame: number, keyframe: string | null = null) {
     if (!this.data) return
+    this.keyframe = keyframe
     const f = Math.min(this.data.video.frames - 1, Math.max(0, Math.round(frame)))
     this.frame = f
     this.lastFrame = f
@@ -58,8 +61,25 @@ export class Player {
     this.emit()
   }
 
+  // キーフレームへ移動して一時停止する
+  seekKeyframe(key: string) {
+    const kf = this.data?.keyframes.find((k) => k.key === key)
+    if (!kf) return
+    this.pause()
+    this.seek(kf.frame, key)
+  }
+
   play() {
     if (!this.data) return
+    // 同じフレームに次のキーフレームがあれば、再生せずにそちらのアドバイスを出す
+    const kfs = this.data.keyframes
+    const i = kfs.findIndex((k) => k.key === this.keyframe)
+    if (i >= 0 && kfs[i + 1]?.frame === kfs[i].frame) {
+      this.keyframe = kfs[i + 1].key
+      this.emit()
+      return
+    }
+    this.keyframe = null
     if (this.frame >= this.range.end || this.frame < this.range.start) this.seek(this.range.start)
     void this.video.play()
   }
@@ -92,7 +112,7 @@ export class Player {
       const kf = this.stopAtKeyframes && this.data.keyframes.find((k) => prev < k.frame && k.frame <= frame)
       if (kf) {
         this.pause()
-        this.seek(kf.frame)
+        this.seek(kf.frame, kf.key)
         return
       }
       if (frame >= this.range.end) {

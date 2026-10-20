@@ -35,19 +35,19 @@ export function SidePanel({
   const image = activeKf ? activeKf.ref_image : thumb === null ? null : `${data.thumb_url}/${thumb}.jpg`
 
   return (
-    <Card className="flex h-full min-h-0 flex-col gap-3 p-5">
+    <Card className="flex h-full min-h-0 flex-col gap-2 p-3 lg:gap-3 lg:p-5">
       <div className="flex-none">
         {activeKf ? (
-          <h2 className="text-2xl font-bold tracking-tight">
+          <h2 className="text-lg font-bold tracking-tight lg:text-2xl">
             {CIRCLED[activeKf.no - 1]} {activeKf.name}
           </h2>
         ) : (
-          <h2 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-            {playing ? <Play className="size-6 fill-current" /> : <Pause className="size-6 fill-current" />}
+          <h2 className="flex items-center gap-2 text-lg font-bold tracking-tight lg:text-2xl">
+            {playing ? <Play className="size-5 fill-current lg:size-6" /> : <Pause className="size-5 fill-current lg:size-6" />}
             {playing ? `スロー再生（${speed}倍速）` : "一時停止中"}
           </h2>
         )}
-        <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground lg:mt-1.5 lg:text-sm">
           {activeKf && <Badge variant="secondary">一時停止中</Badge>}
           <span>{time}</span>
           <Badge variant="outline">{phase}</Badge>
@@ -55,14 +55,16 @@ export function SidePanel({
       </div>
 
       {/* お手本の映像は、アドバイスの場所を残すため高さを抑える */}
-      <div className="flex h-[40%] flex-none justify-center">
-      <div className="relative aspect-[4/3] h-full max-w-full overflow-hidden rounded-lg bg-muted">
+      {/* 縦長の画面（スマホ）では、お手本の映像をアドバイスの左に小さく並べる */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 portrait:flex-row lg:gap-3">
+      <div className="flex h-[40%] flex-none justify-center portrait:h-auto portrait:w-[38%] portrait:items-start">
+      <div className="relative aspect-[4/3] h-full max-w-full overflow-hidden rounded-lg bg-muted portrait:h-auto portrait:w-full">
         {image ? (
           <img src={image} alt="お手本の映像" className="size-full object-contain" />
         ) : (
           <div className="grid size-full place-items-center text-sm text-muted-foreground">（対応する場面なし）</div>
         )}
-        <span className="absolute top-2 left-2 rounded-md bg-black/70 px-2 py-0.5 text-xs font-bold text-green-400">
+        <span className="absolute top-1 left-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-green-400 lg:top-2 lg:left-2 lg:px-2 lg:text-xs">
           お手本（元の映像）
         </span>
       </div>
@@ -71,9 +73,11 @@ export function SidePanel({
       <FitBox
         fitKey={activeKf ? activeKf.key : `legend-${frame < data.keyframes[0].frame}`}
         max={activeKf ? 20 : 16}
+        min={11}
       >
         {activeKf ? <AdviceList items={activeKf.advice} /> : <Legend data={data} frame={frame} />}
       </FitBox>
+      </div>
     </Card>
   )
 }

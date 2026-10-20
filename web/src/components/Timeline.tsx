@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type PointerEvent } from "react"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { CIRCLED, phaseOf, seconds } from "@/lib/analysis"
+import { isTouchDevice } from "@/lib/device"
 import { cn } from "@/lib/utils"
 import type { Keyframe, Phase, Range, Result } from "@/types"
 
@@ -11,9 +12,11 @@ const ZONE_CLASS: Record<Phase, string> = {
   landing: "bg-emerald-600/60",
 }
 
-const MARKER = 30 // キーフレームの印の直径（px）
-const MARKER_GAP = 34 // 同じ段に並べられる印の間隔（px）
-const ROW_H = 34
+// スマホでは指で押しやすいよう印を大きくする
+const TOUCH = isTouchDevice()
+const MARKER = TOUCH ? 36 : 30 // キーフレームの印の直径（px）
+const MARKER_GAP = MARKER + 4 // 同じ段に並べられる印の間隔（px）
+const ROW_H = MARKER + 4
 const STEM = 6 // いちばん下の段の印からバーまでの線の長さ
 
 // 近くの印と重なる印は上の段に置く。段の数は重なり具合で増やす
@@ -34,16 +37,20 @@ export function Timeline({
   range,
   activeKey,
   onSeek,
+  onKeyframe,
   onScrubStart,
   onScrubEnd,
+  compact = false,
 }: {
   data: Result
   frame: number
   range: Range
   activeKey: string | null
   onSeek: (frame: number) => void
+  onKeyframe: (key: string) => void
   onScrubStart: () => void
   onScrubEnd: () => void
+  compact?: boolean // 小さな画面では、印をバーの上に積まず、バーの下に1列のボタンで並べる
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
@@ -61,7 +68,7 @@ export function Timeline({
   const x = (f: number) => Math.min(100, Math.max(0, ((f - range.start) / Math.max(1, range.end - range.start)) * 100))
   const rows = markerRows(data.keyframes, x, width)
   const rowCount = Math.max(1, ...rows.map((r) => r + 1))
-  const barTop = 4 + (rowCount - 1) * ROW_H + MARKER + STEM
+  const barTop = compact ? 6 : 4 + (rowCount - 1) * ROW_H + MARKER + STEM
 
   const frameAt = (e: PointerEvent) => {
     const rect = trackRef.current!.getBoundingClientRect()
@@ -76,7 +83,15 @@ export function Timeline({
     ["landing", ev.landing, range.end],
   ]
 
+  const markerClass = (kf: Keyframe) =>
+    cn(
+      "grid place-items-center rounded-full border-2 border-white font-bold text-neutral-950 shadow-md transition-transform",
+      kf.problems ? "bg-orange-400" : "bg-emerald-400",
+      kf.key === activeKey && "scale-110 ring-4 ring-white/40",
+    )
+
   return (
+    <div>
     <div
       className="relative mx-4 cursor-pointer touch-none select-none"
       style={{ paddingTop: barTop }}
@@ -99,7 +114,7 @@ export function Timeline({
       onPointerLeave={() => setHover(null)}
     >
       {/* キーフレームの印（①〜⑦） */}
-      {data.keyframes.map((kf, i) => {
+      {!compact && data.keyframes.map((kf, i) => {
         const top = barTop - STEM - MARKER - rows[i] * ROW_H
         const active = kf.key === activeKey
         return (
@@ -116,8 +131,7 @@ export function Timeline({
                 style={{ left: `${x(kf.frame)}%`, top, width: MARKER, height: MARKER }}
                 onPointerDown={(e) => {
                   e.stopPropagation()
-                  onScrubStart()
-                  onSeek(kf.frame)
+                  onKeyframe(kf.key)
                 }}
               >
                 {kf.no}
@@ -129,19 +143,19 @@ export function Timeline({
           </Tooltip>
         )
       })}
-      {/* 印からバーまでの線 */}
+      {/* 印からバーまでの線（小さな画面ではバーの上の目盛り） */}
       {data.keyframes.map((kf, i) => {
-        const top = barTop - STEM - rows[i] * ROW_H
+        const top = compact ? barTop - 4 : barTop - STEM - rows[i] * ROW_H
         return (
           <div
             key={`stem-${kf.key}`}
-            className="pointer-events-none absolute w-0.5 -translate-x-1/2 bg-white/80"
-            style={{ left: `${x(kf.frame)}%`, top, height: barTop - top + 14 }}
+            className={cn("pointer-events-none absolute z-10 w-0.5 -translate-x-1/2", compact ? (kf.problems ? "bg-orange-300" : "bg-emerald-300") : "bg-white/80")}
+            style={{ left: `${x(kf.frame)}%`, top, height: barTop - top + (compact ? 24 : 14) }}
           />
         )
       })}
 
-      <div ref={trackRef} className="relative h-3.5 overflow-hidden rounded-full bg-muted">
+      <div ref={trackRef} className="relative h-3.5 overflow-hidden rounded-full bg-muted pointer-coarse:h-5">
         {zones.map(([key, a, b]) => (
           <div
             key={key}
@@ -172,6 +186,22 @@ export function Timeline({
           {seconds(data, hover)}秒（{data.phases[phaseOf(data, hover)]}）
         </div>
       )}
+    </div>
+    {compact && (
+      <div className="mt-1 flex justify-between gap-1 px-1">
+        {data.keyframes.map((kf) => (
+          <button
+            key={kf.key}
+            type="button"
+            aria-label={`${CIRCLED[kf.no - 1]} ${kf.name}`}
+            className={cn(markerClass(kf), "size-9 text-sm")}
+            onClick={() => onKeyframe(kf.key)}
+          >
+            {kf.no}
+          </button>
+        ))}
+      </div>
+    )}
     </div>
   )
 }

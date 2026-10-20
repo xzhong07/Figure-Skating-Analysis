@@ -12,10 +12,6 @@ function recorderType(): string {
   return RECORDER_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) ?? ""
 }
 
-export function cameraSupported(): boolean {
-  return Boolean(navigator.mediaDevices?.getUserMedia) && "MediaRecorder" in window
-}
-
 type Phase = "live" | "recording" | "review"
 
 export function CameraDialog({

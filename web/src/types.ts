@@ -72,6 +72,15 @@ export interface Element {
   available: boolean
 }
 
+// 変換した動画全体（トリミングの前）
+export interface SourceVideo {
+  url: string
+  fps: number
+  frames: number
+  width: number
+  height: number
+}
+
 export interface Job {
   id: string
   stage: string
@@ -79,6 +88,9 @@ export interface Job {
   done: number
   total: number
   error?: string
+  name?: string
+  video?: SourceVideo
+  trim?: { start: number; end: number } // 最後に解析した範囲（フレーム番号）
 }
 
 export interface Settings {
