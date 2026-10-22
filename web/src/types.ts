@@ -17,6 +17,17 @@ export interface AdviceItem {
   color: string
 }
 
+// world 座標（メートル、腰の中心が原点、x=右・y=下・z=奥行き）。未検出の点は null、v は 0/1
+export type Pose3D = { p: ([number, number, number] | null)[]; v: number[] } | null
+
+// キーフレームの3D骨格。お手本は撮影角度の差だけ回し、胴体の長さを自分に合わせてある
+export interface KeyframeWorld {
+  me: Pose3D
+  ref: Pose3D
+  me_yaw: number // 体の向き（度）
+  ref_yaw: number
+}
+
 export interface Keyframe {
   key: string
   no: number
@@ -24,6 +35,7 @@ export interface Keyframe {
   frame: number
   ref_frame: number
   ref_pose: Pose
+  world?: KeyframeWorld // 3D 表示用（この機能より前に作った結果にはない）
   advice: AdviceItem[]
   problems: number
   ref_image: string

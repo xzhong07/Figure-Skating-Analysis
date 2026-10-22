@@ -52,6 +52,9 @@
 - `web/`（React + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui（radix-nova）、ダークテーマ）: `npm run build` で `web/dist` を作り、Flask が配信する（`npm run dev` は 5173 番で、API を 8000 番へ転送）。`web/node_modules` と `web/dist` はコミットしない
   - `lib/player.ts`: `<video>` の再生とフレームの追跡、キーフレームでの一時停止。フレーム番号 = `floor(mediaTime × fps + 0.05)`
   - `components/VideoStage.tsx` + `lib/analysis.ts`: canvas に映像・骨格・測定線を描く。canvas は左側いっぱいの大きさで、拡大表示では切り抜き枠の高さに合わせて人物を中心に置く
+  - `components/SkeletonStage3D.tsx`（three.js、切り替えたときに読み込む）: 映像の右上の「2D / 3D」で切り替える。3D ではキーフレーム①〜⑦の骨格を world 座標で重ね、ドラッグ・ピンチで回して見る（再生はしない。← → でキーフレームを移る）
+    - お手本は2Dと同じく左右反転と撮影角度の差で回し、胴体の長さを自分に合わせる（`app_export.WorldPoses`、`result.json` のキーフレームの `world`）。「体の向きをそろえる」で `me_yaw − ref_yaw` だけさらに回す
+    - 腰の中心が原点なので、跳んだ高さや移動は表せない。`world` のない古い結果は解析し直すと表示できる
   - `components/SidePanel.tsx`: 一時停止中にキーフレームのフレームにいるときだけ、その場面のアドバイスを出す。`FitBox` が枠に収まるまで文字を小さくする（スクロールさせないため）
   - shadcn/ui のコンポーネントは `npx shadcn@latest add <名前>` で `components/ui/` に追加する
 - 種目は `elements.py`。2S・CSp は `available=False`（タブだけ）

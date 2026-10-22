@@ -1,7 +1,7 @@
 """解析結果を、アプリ（ブラウザ）で表示するための JSON と画像に書き出す。
 
 出力（out_dir の中）:
-    result.json      各フレームの骨格・切り抜き枠、キーフレームとアドバイス、まとめ
+    result.json      各フレームの骨格・切り抜き枠、キーフレーム（3D 表示用の骨格つき）とアドバイス、まとめ
     ref/<n>.jpg      お手本の切り抜き画像（お手本のフレーム番号ごと）
     ref_<K>.jpg      キーフレームのお手本の画像（測定線つき）
     marks_<K>.png    キーフレームで自分の映像に重ねる測定線（透明背景、元の動画の大きさ）
@@ -17,11 +17,13 @@ from advice_video import (
     GOOD_COLOR, ITEM_COLORS, SUMMARY_METRICS, THUMB_H, THUMB_W, VIEW_H, VIEW_W,
     Cropper, Renderer, annotate_advice,
 )
+from alignment import MIRROR_INDEX, torso_length
 from analysis import AdviceResult
 from keyframes import KEYFRAMES
 from metrics import VIS_MIN
 from overlay import MODEL_STYLE, SELF_STYLE, Comparison
 from skeleton_drawer import CENTER_BONES, LEFT_BONES, LEFT_POINTS, NOSE, RIGHT_BONES, RIGHT_POINTS, SkeletonStyle
+from view_align import body_yaw, mirror_world, rotate_about_vertical
 
 PHASE_NAMES = {"approach": "踏切前", "air": "空中", "landing": "着氷後"}
 
@@ -37,6 +39,43 @@ def _pose(pts: np.ndarray, vis: np.ndarray) -> dict | None:
     visible = (vis >= VIS_MIN) & ~np.isnan(pts[:, 0])
     flat = np.nan_to_num(pts).round(1).reshape(-1)
     return {"p": flat.tolist(), "v": visible.astype(int).tolist()}
+
+
+def _points3d(world: np.ndarray, vis: np.ndarray) -> dict | None:
+    """33点の3D骨格を {"p": [[x, y, z] | None, ...], "v": [0/1, ...]} にする。未検出なら None。"""
+    if np.isnan(world[:, 0]).all():
+        return None
+    points = [None if np.isnan(q[0]) else q.round(4).tolist() for q in world]
+    visible = (vis >= VIS_MIN) & ~np.isnan(world[:, 0])
+    return {"p": points, "v": visible.astype(int).tolist()}
+
+
+class WorldPoses:
+    """3D 表示用の骨格。world 座標（メートル、腰の中心が原点、x=右・y=下・z=奥行き）。
+
+    お手本は、2D の重ね合わせと同じく左右反転と撮影角度の差の回転をかけ、
+    フレームごとに胴体の長さを自分に合わせる。体の向き（度）は向きをそろえる表示に使う。
+    """
+
+    def __init__(self, comp: Comparison) -> None:
+        me, ref = comp.me, comp.ref
+        self.me, self.me_vis = me.world, me.vis
+        ref_world, self.ref_vis = ref.world, ref.vis
+        if comp.mirror_model:
+            ref_world, self.ref_vis = mirror_world(ref_world), ref.vis[:, MIRROR_INDEX]
+        self.ref = rotate_about_vertical(ref_world, comp.view_offset or 0.0)
+        self.me_yaw, self.ref_yaw = body_yaw(self.me), body_yaw(self.ref)
+
+    def keyframe(self, my_frame: int, ref_frame: int) -> dict:
+        me, ref = self.me[my_frame], self.ref[ref_frame]
+        scale = torso_length(me) / torso_length(ref)
+        ref = ref * (scale if np.isfinite(scale) and scale > 0 else 1.0)
+        return {
+            "me": _points3d(me, self.me_vis[my_frame]),
+            "ref": _points3d(ref, self.ref_vis[ref_frame]),
+            "me_yaw": round(float(self.me_yaw[my_frame]), 1),
+            "ref_yaw": round(float(self.ref_yaw[ref_frame]), 1),
+        }
 
 
 def _style(style: SkeletonStyle, width: int, height: int) -> dict:
@@ -87,6 +126,7 @@ def export(comp: Comparison, result: AdviceResult, out_dir: Path, url_prefix: st
             "thumb": ref_index if ref_index in renderer.thumbs else None,
         })
 
+    world = WorldPoses(comp)
     keyframes = []
     for n, (key, name) in enumerate(KEYFRAMES):
         frame = my_kf[key]
@@ -106,6 +146,7 @@ def export(comp: Comparison, result: AdviceResult, out_dir: Path, url_prefix: st
         keyframes.append({
             "key": key, "no": n + 1, "name": name, "frame": frame, "ref_frame": ref_kf[key],
             "ref_pose": _pose(*transformed[:2]) if transformed else None,
+            "world": world.keyframe(frame, ref_kf[key]),
             "advice": items, "problems": problem_no,
             "ref_image": f"{url_prefix}/ref_{key}.jpg", "marks_image": f"{url_prefix}/marks_{key}.png",
         })

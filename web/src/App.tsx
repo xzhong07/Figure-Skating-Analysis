@@ -1,5 +1,5 @@
 import { Camera, ClipboardList, Pause, Play, QrCode, Scissors, Square, Upload, Video } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { CameraDialog } from "@/components/CameraDialog"
 import { PhoneDialog } from "@/components/PhoneDialog"
@@ -19,6 +19,9 @@ import { canUseInAppCamera, isTouchDevice } from "@/lib/device"
 import { Player } from "@/lib/player"
 import { cn } from "@/lib/utils"
 import type { Element, Job, Result, Settings } from "@/types"
+
+// 3D 表示（three.js）は切り替えたときに読み込み、2D の画面を重くしない
+const SkeletonStage3D = lazy(() => import("@/components/SkeletonStage3D").then((m) => ({ default: m.SkeletonStage3D })))
 
 const FALLBACK_ELEMENTS: Element[] = [{ code: "1A", name: "シングルアクセル", available: true }]
 const RETRIM_HINT = "踏切の約1秒前から着氷の約1秒後までが入るように、範囲を選び直してみてください。"
@@ -66,6 +69,7 @@ export default function App() {
   const [phoneUrls, setPhoneUrls] = useState<string[]>([])
   const [phoneOpen, setPhoneOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [view, setView] = useState<"2d" | "3d">("2d")
 
   const range = useMemo(() => (data ? playRange(data, settings.fullRange) : { start: 0, end: 0 }), [data, settings.fullRange])
   // 一時停止中で、ちょうどキーフレームの上にいるときはその場面のアドバイスを出す
@@ -77,6 +81,19 @@ export default function App() {
         null)
       : null
   const canRetrim = Boolean(job?.video)
+  // 3D はキーフレームの骨格を見る画面。解析中やエラーの表示は 2D の画面に出す
+  const show3d = view === "3d" && data !== null && status.kind === "idle"
+
+  // 3D では再生せず、いつもどれかのキーフレームを選んでおく（いまの位置にいちばん近いもの）
+  useEffect(() => {
+    const player = playerRef.current
+    if (!show3d || !data || !player) return
+    if (playing) player.pause()
+    else if (!activeKf) {
+      const nearest = data.keyframes.reduce((a, b) => (Math.abs(b.frame - frame) < Math.abs(a.frame - frame) ? b : a))
+      player.seekKeyframe(nearest.key)
+    }
+  }, [show3d, data, playing, activeKf, frame])
 
   // キーフレームの測定線の画像
   const marks = useMemo(() => {
@@ -226,6 +243,16 @@ export default function App() {
       if (!data || !player || cameraOpen || summaryOpen || trimOpen) return
       const target = e.target as HTMLElement
       if (target.closest("input, select, textarea, [role=combobox], [role=switch], [role=tab], [role=slider]")) return
+      if (show3d) {
+        // 3D では ← → で前後のキーフレームへ
+        if (e.code !== "ArrowLeft" && e.code !== "ArrowRight") return
+        e.preventDefault()
+        const kfs = data.keyframes
+        const i = kfs.findIndex((k) => k.key === activeKf?.key)
+        const next = kfs[Math.min(kfs.length - 1, Math.max(0, i + (e.code === "ArrowLeft" ? -1 : 1)))]
+        player.seekKeyframe(next.key)
+        return
+      }
       if (e.code === "Space") {
         e.preventDefault()
         player.toggle()
@@ -237,7 +264,7 @@ export default function App() {
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
-  }, [data, cameraOpen, summaryOpen, trimOpen])
+  }, [data, cameraOpen, summaryOpen, trimOpen, show3d, activeKf])
 
   const pickFile = () => fileRef.current?.click()
   // PC はアプリ内のカメラ、スマホ（と HTTPS でない接続）は標準カメラアプリで撮る
@@ -275,6 +302,32 @@ export default function App() {
     </>
   )
 
+  // 2D（映像に重ねる）と 3D（骨格を回して見る）の切り替え。どちらの画面でも右上に出す
+  const viewTabs = data && status.kind === "idle" && (
+    <Tabs value={view} onValueChange={(v) => setView(v as "2d" | "3d")} className="absolute top-2 right-2 z-10 lg:top-3 lg:right-3">
+      <TabsList className="bg-black/65 backdrop-blur">
+        <TabsTrigger value="2d" className="px-3 font-bold">
+          2D
+        </TabsTrigger>
+        <TabsTrigger value="3d" className="px-3 font-bold">
+          3D
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  )
+
+  const updateSettings = (s: Partial<Settings>) => {
+    setSettings((prev) => ({ ...prev, ...s }))
+    // 範囲を切り替えて今の位置が外れたら先頭へ
+    if (data && s.fullRange !== undefined) {
+      const r = playRange(data, s.fullRange)
+      if (frame < r.start || frame > r.end) {
+        playerRef.current!.range = r
+        playerRef.current?.seek(r.start)
+      }
+    }
+  }
+
   // 画面が狭いとき（スマホ）は、ボタンの文字を隠してアイコンだけにする
   const label = (text: string) => <span className="hidden lg:inline">{text}</span>
 
@@ -295,11 +348,10 @@ export default function App() {
                 key={e.code}
                 value={e.code}
                 disabled={!e.available}
-                title={e.available ? e.name : `${e.name}（準備中）`}
+                title={e.name}
                 className="px-2 font-bold lg:px-4"
               >
                 {e.code}
-                {!e.available && <span className="hidden text-[10px] font-normal text-muted-foreground sm:inline">準備中</span>}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -363,13 +415,14 @@ export default function App() {
             activeKf={activeKf}
             settings={settings}
             marks={marks}
-            className="portrait:h-[36dvh] portrait:flex-none"
+            className={cn("portrait:h-[36dvh] portrait:flex-none", show3d && "hidden")}
             badge={
               <div className="absolute top-2 left-2 flex items-center gap-2 rounded-lg bg-black/65 px-2.5 py-1 text-sm font-bold text-white backdrop-blur lg:top-3 lg:left-3 lg:px-3 lg:py-1.5 lg:text-lg">
                 {badge}
               </div>
             }
           >
+            {!show3d && viewTabs}
             {!data && status.kind === "idle" && (
               <div
                 className={cn(
@@ -439,7 +492,23 @@ export default function App() {
             )}
           </VideoStage>
 
+          {show3d && data && (
+            <Suspense fallback={<div className="grid flex-1 place-items-center text-muted-foreground portrait:h-[36dvh] portrait:flex-none">3D 表示を準備しています</div>}>
+              <SkeletonStage3D
+                data={data}
+                activeKf={activeKf}
+                settings={settings}
+                onSettings={updateSettings}
+                onKeyframe={(key) => playerRef.current?.seekKeyframe(key)}
+                className="portrait:h-[36dvh] portrait:flex-none"
+              >
+                {viewTabs}
+              </SkeletonStage3D>
+            </Suspense>
+          )}
+
           <PlayerControls
+            className={cn(show3d && "hidden")}
             data={data}
             frame={frame}
             playing={playing}
@@ -450,17 +519,7 @@ export default function App() {
             onToggle={() => playerRef.current?.toggle()}
             onStop={() => playerRef.current?.stop()}
             onSpeed={setSpeed}
-            onSettings={(s) => {
-              setSettings((prev) => ({ ...prev, ...s }))
-              // 範囲を切り替えて今の位置が外れたら先頭へ
-              if (data && s.fullRange !== undefined) {
-                const r = playRange(data, s.fullRange)
-                if (frame < r.start || frame > r.end) {
-                  playerRef.current!.range = r
-                  playerRef.current?.seek(r.start)
-                }
-              }
-            }}
+            onSettings={updateSettings}
             onSeek={(f) => playerRef.current?.seek(f)}
             onKeyframe={(key) => playerRef.current?.seekKeyframe(key)}
             onScrubStart={() => {

@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { phaseOf, seconds } from "@/lib/analysis"
 import { useSmallScreen } from "@/lib/device"
+import { cn } from "@/lib/utils"
 import type { Range, Result, Settings } from "@/types"
 
 export const SPEEDS = ["0.1", "0.25", "0.5", "0.75", "1"]
@@ -66,6 +67,7 @@ export function PlayerControls({
   onKeyframe,
   onScrubStart,
   onScrubEnd,
+  className,
 }: {
   data: Result | null
   frame: number
@@ -82,6 +84,7 @@ export function PlayerControls({
   onKeyframe: (key: string) => void
   onScrubStart: () => void
   onScrubEnd: () => void
+  className?: string
 }) {
   const disabled = !data
   // 小さな画面では、骨格のスイッチも「表示設定」の中にまとめて、映像とアドバイスの場所を空ける
@@ -93,7 +96,7 @@ export function PlayerControls({
     </>
   )
   return (
-    <Card className="flex-none gap-1 px-2 py-2 lg:px-3 lg:py-2.5" aria-disabled={disabled}>
+    <Card className={cn("flex-none gap-1 px-2 py-2 lg:px-3 lg:py-2.5", className)} aria-disabled={disabled}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-2 lg:gap-x-3">
         <IconButton label={playing ? "一時停止（スペースキー）" : "再生（スペースキー）"} onClick={onToggle} disabled={disabled}>
           {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
